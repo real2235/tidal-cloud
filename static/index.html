@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tidal FLAC Master • Cloud Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            luxury: ['"Cinzel"', 'serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              dark: '#0A0D14',
+              card: '#111622',
+              border: '#1E2638',
+            },
+            gold: {
+              300: '#F3E5AB',
+              400: '#DFBE7A',
+              500: '#D4AF37',
+              600: '#B89225',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #07090E;
+      color: #E2E8F0;
+    }
+    .gold-gradient {
+      background: linear-gradient(135deg, #FFF3D1 0%, #D4AF37 50%, #997819 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .gold-button {
+      background: linear-gradient(135deg, #E6CA65 0%, #D4AF37 50%, #B89225 100%);
+      transition: all 0.25s ease;
+    }
+    .gold-button:hover {
+      background: linear-gradient(135deg, #F3DA7A 0%, #DFBE7A 50%, #C49F30 100%);
+      box-shadow: 0 0 20px rgba(212, 175, 55, 0.4);
+      transform: translateY(-1px);
+    }
+    .gold-border {
+      border-color: rgba(212, 175, 55, 0.35);
+    }
+    .gold-glow {
+      box-shadow: 0 0 30px rgba(212, 175, 55, 0.15);
+    }
+    .glass-card {
+      background: rgba(17, 22, 34, 0.75);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(212, 175, 55, 0.3);
+      border-radius: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(212, 175, 55, 0.6);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col font-sans selection:bg-amber-500 selection:text-black antialiased">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-40 bg-[#07090E]/90 backdrop-blur-md border-b border-white/5 py-4 px-6 sm:px-10">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 via-yellow-500 to-amber-300 flex items-center justify-center text-black font-extrabold shadow-lg shadow-amber-500/20">
+          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2L6 8l6 6 6-6-6-6zM6 14l6 6 6-6-6-6-6 6z"/>
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-luxury font-extrabold text-lg sm:text-xl tracking-wider text-white">Audio Studio</h1>
+            <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-300 border border-amber-400/30 uppercase tracking-widest font-mono">Cloud Edition</span>
+          </div>
+          <p class="text-xs text-slate-400">Descarga de canciones y álbumes en FLAC sin pérdida (24-bit Hi-Res)</p>
+        </div>
+      </div>
+
+      <!-- Estado de Cuenta -->
+      <div class="flex items-center gap-3">
+        <div id="accountStatusBadge" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-stone-900 border border-stone-800 text-xs font-mono">
+          <span id="accountStatusDot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="accountStatusText" class="text-stone-300">Conectando...</span>
+        </div>
+        <button id="btnOpenAuthModal" class="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-stone-300 text-xs font-semibold border border-white/10 transition-all flex items-center gap-1.5">
+          <svg class="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+          <span id="btnAuthLabel">Cuenta Tidal</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Contenido Principal -->
+  <main class="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8">
+
+    <!-- Tarjeta de Control Principal -->
+    <div class="glass-card rounded-3xl p-6 sm:p-8 gold-glow border border-amber-500/20 mb-8">
+      
+      <!-- Calidad de Descarga -->
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-white/5">
+        <div>
+          <h2 class="text-xs font-bold uppercase tracking-widest text-amber-300 font-luxury mb-1">Calidad de Descarga Seleccionada</h2>
+          <p class="text-xs text-slate-400">Archivos puros FLAC con metadatos, letras (.lrc) y carátula incrustada</p>
+        </div>
+        
+        <div class="flex items-center gap-2 bg-stone-950 p-1.5 rounded-2xl border border-white/10">
+          <label class="cursor-pointer">
+            <input type="radio" name="tidalQuality" value="master" checked class="peer sr-only">
+            <div class="px-4 py-2 rounded-xl text-xs font-bold peer-checked:bg-amber-400 peer-checked:text-black text-stone-400 transition-all flex items-center gap-1.5 font-luxury">
+              <span>👑 Master / Max (24-bit Hi-Res)</span>
+            </div>
+          </label>
+          <label class="cursor-pointer">
+            <input type="radio" name="tidalQuality" value="hifi" class="peer sr-only">
+            <div class="px-4 py-2 rounded-xl text-xs font-bold peer-checked:bg-amber-400 peer-checked:text-black text-stone-400 transition-all flex items-center gap-1.5 font-luxury">
+              <span>💿 HiFi Lossless (16-bit / 44.1kHz)</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Buscador Universal -->
+      <form id="searchForm" class="relative">
+        <label class="block text-xs font-bold uppercase tracking-widest text-amber-300/80 mb-2 font-luxury">
+          Buscar en Catálogo o Pegar Enlace (Canción o Álbum)
+        </label>
+        <div class="relative flex items-center">
+          <input 
+            type="text" 
+            id="searchInput"
+            placeholder="Escribe el nombre de la canción, artista o pega un enlace de Tidal..."
+            class="w-full bg-stone-950/90 border border-stone-800 rounded-2xl px-5 py-4 text-sm sm:text-base text-white placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all pr-28 font-sans"
+            autocomplete="off"
+            required
+          />
+          <button 
+            type="submit" 
+            id="btnSearch"
+            class="absolute right-2 px-5 py-2.5 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 font-luxury"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <span>Buscar</span>
+          </button>
+        </div>
+      </form>
+
+      <!-- Panel de Progreso Activo de Descarga -->
+      <div id="progressBox" class="hidden mt-6 p-5 rounded-2xl bg-black/80 border border-amber-500/30">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+            <span id="progressTitle" class="text-xs font-bold text-white font-luxury">Procesando descarga...</span>
+          </div>
+          <span id="progressPercent" class="text-xs font-mono font-bold text-amber-400">0%</span>
+        </div>
+        <div class="w-full bg-stone-900 rounded-full h-2.5 overflow-hidden mb-2">
+          <div id="progressBar" class="bg-gradient-to-r from-amber-600 via-amber-400 to-yellow-300 h-2.5 rounded-full transition-all duration-300 w-0"></div>
+        </div>
+        <p id="progressStatus" class="text-[11px] text-slate-400 font-mono truncate">Conectando a servidores de Tidal...</p>
+      </div>
+
+      <!-- Tarjeta de Descarga Lista / Éxito -->
+      <div id="successBox" class="hidden mt-6 p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5 min-w-0">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+          </div>
+          <div class="min-w-0">
+            <h4 id="successTitle" class="text-xs font-bold text-emerald-300 font-luxury uppercase tracking-wider">¡Descarga Completada!</h4>
+            <p id="successFileName" class="text-xs text-white font-mono truncate">archivo.flac</p>
+            <p id="successFileSize" class="text-[11px] text-slate-400 font-mono">Guardado en tu PC</p>
+          </div>
+        </div>
+
+        <a id="btnDirectDownload" href="#" download class="px-5 py-2.5 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center gap-2 font-luxury shrink-0">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          <span>Descargar a mi PC</span>
+        </a>
+      </div>
+
+    </div>
+
+    <!-- Resultados de Búsqueda -->
+    <div id="searchResultsSection" class="hidden space-y-6">
+      
+      <!-- Pestañas Canciones / Álbumes -->
+      <div class="flex items-center justify-between pb-3 border-b border-white/10">
+        <div class="flex items-center gap-3">
+          <button id="tabTracksBtn" class="px-4 py-1.5 rounded-xl bg-amber-400 text-black font-bold text-xs font-luxury transition-all">
+            Canciones (<span id="tracksCount">0</span>)
+          </button>
+          <button id="tabAlbumsBtn" class="px-4 py-1.5 rounded-xl text-stone-400 hover:text-white font-bold text-xs font-luxury transition-all">
+            Álbumes (<span id="albumsCount">0</span>)
+          </button>
+        </div>
+
+        <!-- Barra de selección múltiple -->
+        <div id="batchBar" class="hidden flex items-center gap-3">
+          <span id="selectedCountText" class="text-xs text-amber-300 font-mono">0 seleccionadas</span>
+          <button id="btnDownloadBatch" class="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black border border-amber-500/40 text-xs font-bold font-luxury transition-all">
+            Descargar Seleccionadas
+          </button>
+        </div>
+      </div>
+
+      <!-- Vista de Canciones -->
+      <div id="tracksList" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <!-- Render dinámico de canciones -->
+      </div>
+
+      <!-- Vista de Álbumes -->
+      <div id="albumsGrid" class="hidden grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        <!-- Render dinámico de álbumes -->
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Modal de Autenticación Tidal -->
+  <div id="authModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="glass-card max-w-md w-full rounded-3xl p-6 border border-amber-500/30">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold text-white font-luxury uppercase tracking-wider flex items-center gap-2">
+          <span>👑</span> Vincular Cuenta Tidal
+        </h3>
+        <button id="btnCloseAuthModal" class="text-stone-400 hover:text-white p-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <p class="text-xs text-slate-300 mb-4 leading-relaxed">
+        Para descargar canciones en calidad **Master / Hi-Res FLAC**, vincula una cuenta de Tidal con suscripción HiFi:
+      </p>
+
+      <div id="authStepInitial" class="space-y-4">
+        <button id="btnStartAuth" class="w-full py-3 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider font-luxury">
+          Iniciar Vinculación con Código
+        </button>
+        <button id="btnLogout" class="hidden w-full py-2.5 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500 hover:text-white border border-rose-500/30 font-bold text-xs transition-all">
+          Cerrar Sesión Actual
+        </button>
+      </div>
+
+      <div id="authStepWaiting" class="hidden space-y-4 text-center py-2">
+        <p class="text-xs text-slate-300">Abre el siguiente enlace e introduce este código en tu cuenta:</p>
+        <div class="p-3 rounded-2xl bg-stone-950 border border-amber-400/40">
+          <span id="authUserCode" class="text-2xl font-mono font-extrabold text-amber-300 tracking-widest">----</span>
+        </div>
+        <a id="authVerifyLink" href="#" target="_blank" class="block w-full py-3 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider font-luxury">
+          Abrir Página de Tidal
+        </a>
+        <p class="text-[11px] text-amber-400/80 font-mono animate-pulse">Esperando confirmación de Tidal...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Player Flotante -->
+  <audio id="audioPreview" class="hidden"></audio>
+
+  <!-- Script Principal -->
+  <script>
+    const searchForm = document.getElementById('searchForm');
+    const searchInput = document.getElementById('searchInput');
+    const btnSearch = document.getElementById('btnSearch');
+    const progressBox = document.getElementById('progressBox');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressStatus = document.getElementById('progressStatus');
+    const progressTitle = document.getElementById('progressTitle');
+    const successBox = document.getElementById('successBox');
+    const successFileName = document.getElementById('successFileName');
+    const successFileSize = document.getElementById('successFileSize');
+    const btnDirectDownload = document.getElementById('btnDirectDownload');
+    const searchResultsSection = document.getElementById('searchResultsSection');
+    const tracksList = document.getElementById('tracksList');
+    const albumsGrid = document.getElementById('albumsGrid');
+    const tabTracksBtn = document.getElementById('tabTracksBtn');
+    const tabAlbumsBtn = document.getElementById('tabAlbumsBtn');
+    const tracksCount = document.getElementById('tracksCount');
+    const albumsCount = document.getElementById('albumsCount');
+    const batchBar = document.getElementById('batchBar');
+    const selectedCountText = document.getElementById('selectedCountText');
+    const btnDownloadBatch = document.getElementById('btnDownloadBatch');
+    const audioPreview = document.getElementById('audioPreview');
+
+    // Auth Elements
+    const authModal = document.getElementById('authModal');
+    const btnOpenAuthModal = document.getElementById('btnOpenAuthModal');
+    const btnCloseAuthModal = document.getElementById('btnCloseAuthModal');
+    const btnStartAuth = document.getElementById('btnStartAuth');
+    const btnLogout = document.getElementById('btnLogout');
+    const authStepInitial = document.getElementById('authStepInitial');
+    const authStepWaiting = document.getElementById('authStepWaiting');
+    const authUserCode = document.getElementById('authUserCode');
+    const authVerifyLink = document.getElementById('authVerifyLink');
+    const accountStatusText = document.getElementById('accountStatusText');
+    const accountStatusDot = document.getElementById('accountStatusDot');
+
+    let currentTracks = [];
+    let currentAlbums = [];
+    const selectedTrackIds = new Set();
+    let authPollTimer = null;
+
+    // Disparar descarga automática en el navegador del usuario
+    function triggerBrowserDownload(url, filename) {
+      if (!url) return;
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        if (filename) a.download = filename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          if (document.body.contains(a)) document.body.removeChild(a);
+        }, 1500);
+      } catch (e) {
+        console.warn("No se pudo iniciar la descarga automática:", e);
+      }
+    }
+
+    // Comprobar estado de cuenta
+    async function checkAccountStatus() {
+      try {
+        const res = await fetch('/api/tidal/status');
+        const data = await res.json();
+        if (data.logged_in) {
+          accountStatusText.textContent = `Tidal HiFi (${data.country_code || 'Activo'})`;
+          accountStatusDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+          btnLogout.classList.remove('hidden');
+        } else {
+          accountStatusText.textContent = "Cuenta No Vinculada";
+          accountStatusDot.className = "w-2 h-2 rounded-full bg-amber-400";
+          btnLogout.classList.add('hidden');
+        }
+      } catch (e) {
+        accountStatusText.textContent = "Servidor Activo";
+      }
+    }
+    checkAccountStatus();
+
+    // Pestañas
+    tabTracksBtn.onclick = () => {
+      tabTracksBtn.className = "px-4 py-1.5 rounded-xl bg-amber-400 text-black font-bold text-xs font-luxury transition-all";
+      tabAlbumsBtn.className = "px-4 py-1.5 rounded-xl text-stone-400 hover:text-white font-bold text-xs font-luxury transition-all";
+      tracksList.classList.remove('hidden');
+      albumsGrid.classList.add('hidden');
+    };
+
+    tabAlbumsBtn.onclick = () => {
+      tabAlbumsBtn.className = "px-4 py-1.5 rounded-xl bg-amber-400 text-black font-bold text-xs font-luxury transition-all";
+      tabTracksBtn.className = "px-4 py-1.5 rounded-xl text-stone-400 hover:text-white font-bold text-xs font-luxury transition-all";
+      tracksList.classList.add('hidden');
+      albumsGrid.classList.remove('hidden');
+    };
+
+    // Búsqueda
+    searchForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const query = searchInput.value.trim();
+      if (!query) return;
+
+      btnSearch.disabled = true;
+      btnSearch.innerHTML = `<span class="animate-spin text-xs">⌛</span> Buscando...`;
+      successBox.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/tidal/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, type: 'all' })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error en la búsqueda");
+
+        currentTracks = data.tracks || [];
+        currentAlbums = data.albums || [];
+        tracksCount.textContent = currentTracks.length;
+        albumsCount.textContent = currentAlbums.length;
+
+        renderTracks(currentTracks);
+        renderAlbums(currentAlbums);
+        selectedTrackIds.clear();
+        updateBatchBar();
+
+        searchResultsSection.classList.remove('hidden');
+        tabTracksBtn.click();
+      } catch (err) {
+        alert("Error al buscar: " + err.message);
+      } finally {
+        btnSearch.disabled = false;
+        btnSearch.innerHTML = `
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <span>Buscar</span>
+        `;
+      }
+    };
+
+    // Render de Canciones
+    function renderTracks(tracks) {
+      if (tracks.length === 0) {
+        tracksList.innerHTML = `<div class="col-span-2 text-center py-8 text-xs text-stone-500">No se encontraron canciones.</div>`;
+        return;
+      }
+      tracksList.innerHTML = tracks.map(t => `
+        <div class="glass-card p-3 rounded-2xl flex items-center justify-between gap-3 group hover:border-amber-400/40 transition-all">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <input type="checkbox" class="track-checkbox w-4 h-4 accent-amber-400 rounded cursor-pointer" data-id="${t.id}" />
+            <img src="${t.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-12 h-12 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-900" />
+            <div class="min-w-0 flex-1">
+              <h4 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h4>
+              <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">FLAC</span>
+                <span class="text-[10px] text-stone-500 font-mono">${t.duration}</span>
+              </div>
+            </div>
+          </div>
+          <button class="btn-dl-track px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[11px] font-luxury flex items-center gap-1 transition-all shrink-0" data-url="${t.url}">
+            <span>Descargar</span>
+          </button>
+        </div>
+      `).join('');
+
+      // Eventos de descarga individual
+      document.querySelectorAll('.btn-dl-track').forEach(b => {
+        b.onclick = () => startDownload(b.dataset.url);
+      });
+
+      // Eventos de selección
+      document.querySelectorAll('.track-checkbox').forEach(cb => {
+        cb.onchange = () => {
+          if (cb.checked) selectedTrackIds.add(cb.dataset.id);
+          else selectedTrackIds.delete(cb.dataset.id);
+          updateBatchBar();
+        };
+      });
+    }
+
+    // Render de Álbumes
+    function renderAlbums(albums) {
+      if (albums.length === 0) {
+        albumsGrid.innerHTML = `<div class="col-span-4 text-center py-8 text-xs text-stone-500">No se encontraron álbumes.</div>`;
+        return;
+      }
+      albumsGrid.innerHTML = albums.map(a => `
+        <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all">
+          <div class="relative mb-2">
+            <img src="${a.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900" />
+            <span class="absolute top-2 right-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-black/80 text-amber-300 font-mono border border-amber-400/30">Álbum</span>
+          </div>
+          <h4 class="text-xs font-bold text-white truncate font-luxury mb-0.5">${a.title}</h4>
+          <p class="text-[11px] text-stone-400 truncate mb-2">${a.artist}</p>
+          <div class="flex items-center justify-between pt-2 border-t border-white/5">
+            <span class="text-[10px] text-stone-500 font-mono">${a.tracks_count || '?'} canciones</span>
+            <button class="btn-dl-album px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury transition-all" data-url="${a.url}">
+              <span>ZIP FLAC</span>
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.btn-dl-album').forEach(b => {
+        b.onclick = () => startDownload(b.dataset.url);
+      });
+    }
+
+    function updateBatchBar() {
+      if (selectedTrackIds.size > 0) {
+        selectedCountText.textContent = `${selectedTrackIds.size} seleccionada(s)`;
+        batchBar.classList.remove('hidden');
+      } else {
+        batchBar.classList.add('hidden');
+      }
+    }
+
+    btnDownloadBatch.onclick = async () => {
+      const selectedTracks = currentTracks.filter(t => selectedTrackIds.has(t.id));
+      if (selectedTracks.length === 0) return;
+      for (const t of selectedTracks) {
+        await startDownload(t.url);
+      }
+    };
+
+    // Motor de descarga y sondeo de tarea
+    async function startDownload(url) {
+      const quality = document.querySelector('input[name="tidalQuality"]:checked')?.value || 'master';
+      
+      progressBox.classList.remove('hidden');
+      progressBar.style.width = '0%';
+      progressPercent.textContent = '0%';
+      progressStatus.textContent = 'Iniciando en el servidor...';
+      successBox.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/tidal/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, quality })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error al iniciar");
+
+        const taskId = data.task_id;
+        await pollTask(taskId);
+      } catch (err) {
+        progressBox.classList.add('hidden');
+        alert("Error de descarga: " + err.message);
+      }
+    }
+
+    function pollTask(taskId) {
+      return new Promise((resolve, reject) => {
+        const timer = setInterval(async () => {
+          try {
+            const res = await fetch(`/api/task-status/${taskId}`);
+            if (!res.ok) throw new Error("Error consultando estado");
+            const task = await res.json();
+
+            const pct = Math.min(Math.max(Math.round(task.percent), 0), 100);
+            progressBar.style.width = `${pct}%`;
+            progressPercent.textContent = `${pct}%`;
+            progressStatus.textContent = task.status || 'Descargando...';
+
+            if (task.completed) {
+              clearInterval(timer);
+              progressBox.classList.add('hidden');
+
+              if (task.error) {
+                alert("Error al descargar: " + task.error);
+                reject(new Error(task.error));
+              } else if (task.result) {
+                const res = task.result;
+                successTitle.textContent = res.type === 'album' ? "¡Álbum Completado en .ZIP!" : "¡Canción FLAC Lista!";
+                successFileName.textContent = res.filename;
+                successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • Descargando a tu equipo...`;
+                btnDirectDownload.href = res.download_url;
+                btnDirectDownload.setAttribute('download', res.filename);
+                successBox.classList.remove('hidden');
+
+                // Disparo de descarga directa al PC del usuario
+                triggerBrowserDownload(res.download_url, res.filename);
+                resolve();
+              }
+            }
+          } catch (e) {
+            clearInterval(timer);
+            progressBox.classList.add('hidden');
+            reject(e);
+          }
+        }, 600);
+      });
+    }
+
+    // Modal de Autenticación
+    btnOpenAuthModal.onclick = () => authModal.classList.remove('hidden');
+    btnCloseAuthModal.onclick = () => {
+      authModal.classList.add('hidden');
+      if (authPollTimer) clearInterval(authPollTimer);
+    };
+
+    btnStartAuth.onclick = async () => {
+      btnStartAuth.disabled = true;
+      btnStartAuth.textContent = "Generando código...";
+      try {
+        const res = await fetch('/api/tidal/auth/start', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error");
+
+        authUserCode.textContent = data.user_code;
+        authVerifyLink.href = data.verification_url;
+        authStepInitial.classList.add('hidden');
+        authStepWaiting.classList.remove('hidden');
+
+        // Sondeo del token
+        authPollTimer = setInterval(async () => {
+          try {
+            const pRes = await fetch('/api/tidal/auth/poll', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ device_code: data.device_code })
+            });
+            const pData = await pRes.json();
+            if (pData.status === 'success') {
+              clearInterval(authPollTimer);
+              authModal.classList.add('hidden');
+              checkAccountStatus();
+              alert("¡Cuenta de Tidal vinculada con éxito!");
+            }
+          } catch (err) {}
+        }, (data.interval || 5) * 1000);
+
+      } catch (err) {
+        alert("Error: " + err.message);
+        btnStartAuth.disabled = false;
+        btnStartAuth.textContent = "Iniciar Vinculación con Código";
+      }
+    };
+
+    btnLogout.onclick = async () => {
+      if (!confirm("¿Deseas desvincular la cuenta actual de Tidal?")) return;
+      await fetch('/api/tidal/logout', { method: 'POST' });
+      authModal.classList.add('hidden');
+      checkAccountStatus();
+      alert("Cuenta desvinculada.");
+    };
+  </script>
+</body>
+</html>
