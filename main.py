@@ -45,15 +45,38 @@ TEMP_DIR = BASE_DIR / "temp_downloads"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Comprobar si hay credenciales preconfiguradas por variable de entorno (Render.com)
-TIDAL_CONFIG_ENV = os.environ.get("TIDAL_CONFIG_JSON")
-if TIDAL_CONFIG_ENV:
+def init_tidal_env_config():
+    raw_env = os.environ.get("TIDAL_CONFIG_JSON", "").strip()
+    if not raw_env:
+        return
     try:
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            f.write(TIDAL_CONFIG_ENV)
-        logger.info("[TIDAL] Credenciales cargadas exitosamente desde variable de entorno TIDAL_CONFIG_JSON.")
+        data = json.loads(raw_env)
+        cfg = TidalConfig.fromFile()
+        
+        # Soportar si el usuario pegó el archivo completo o solo el objeto auth
+        if "auth" in data and isinstance(data["auth"], dict):
+            auth_data = data["auth"]
+        elif isinstance(data, dict):
+            auth_data = data
+        else:
+            return
+
+        token = auth_data.get("token") or auth_data.get("access_token")
+        if token:
+            cfg.auth = TidalAuthConfig(
+                token=token,
+                refresh_token=auth_data.get("refresh_token", ""),
+                expires=int(auth_data.get("expires", 0)) or (int(time.time()) + 86400 * 30),
+                user_id=str(auth_data.get("user_id", "")),
+                country_code=str(auth_data.get("country_code", "CO") or "CO"),
+            )
+            cfg.save()
+            logger.info(f"[TIDAL] Credenciales aplicadas exitosamente para usuario ID: {cfg.auth.user_id} (País: {cfg.auth.country_code})")
     except Exception as e:
-        logger.warning(f"[TIDAL] No se pudo escribir TIDAL_CONFIG_JSON: {e}")
+        logger.error(f"[TIDAL] Error procesando TIDAL_CONFIG_JSON: {e}")
+
+init_tidal_env_config()
+
 
 # Tareas en memoria (aisladas por sesión/ID)
 tasks: Dict[str, Dict[str, Any]] = {}
