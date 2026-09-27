@@ -10,21 +10,8 @@ echo ========================================================
 echo        SUBIR PROYECTO TIDAL CLOUD A GITHUB
 echo ========================================================
 echo.
-echo 1. Asegúrate de haber creado un repositorio nuevo en GitHub:
-echo    https://github.com/new
-echo.
-echo 2. Pega aquí el enlace HTTPS de tu repositorio de GitHub
-echo    (Ejemplo: https://github.com/tu-usuario/tidal-cloud.git)
-echo.
-set /p REPO_URL="Enlace del repositorio: "
-
-if "%REPO_URL%"=="" (
-    echo.
-    echo [ERROR] No introdujiste ningún enlace. Operación cancelada.
-    pause
-    exit /b
-)
-
+echo Repositorio: https://github.com/real2235/tidal-cloud.git
+set "REPO_URL=https://github.com/real2235/tidal-cloud.git"
 echo.
 echo [1/3] Configurando enlace remoto...
 "%GIT_CMD%" remote remove origin >nul 2>&1
@@ -34,23 +21,23 @@ echo [2/3] Preparando rama principal (main)...
 "%GIT_CMD%" branch -M main
 
 echo [3/3] Subiendo archivos a GitHub...
+echo (Si se abre una ventana en tu pantalla, autoriza el acceso a tu cuenta de GitHub)
 echo.
 "%GIT_CMD%" push -u origin main
 
 if %errorlevel% equ 0 (
     echo.
     echo ========================================================
-    echo  ¡PROYECTO SUBIDO CON ÉXITO A GITHUB!
+    echo  PROYECTO SUBIDO CON EXITO A GITHUB!
     echo.
-    echo  Ahora ve a Render.com y conéctalo en 1 clic:
+    echo  Ahora ve a Render.com y conectalo en 1 clic:
     echo  1. Entra a https://render.com
     echo  2. Dale a 'New +' -> 'Web Service'
-    echo  3. Elige tu repositorio y dale a 'Deploy Web Service'
+    echo  3. Elige tu repositorio 'tidal-cloud' y dale a 'Deploy'
     echo ========================================================
 ) else (
     echo.
-    echo [ERROR] Hubo un problema al subir a GitHub.
-    echo Verifica que el enlace sea correcto y que hayas iniciado sesión en GitHub.
+    echo [AVISO] Si te pidio iniciar sesion, autorizalo en la ventana que aparecio.
 )
 
 echo.
