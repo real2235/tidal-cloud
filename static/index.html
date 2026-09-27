@@ -189,26 +189,42 @@
       </div>
 
       <!-- Tarjeta de Descarga Lista / Éxito -->
-      <div id="successBox" class="hidden mt-6 p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div class="flex items-center gap-3.5 min-w-0">
-          <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-            </svg>
-          </div>
-          <div class="min-w-0">
-            <h4 id="successTitle" class="text-xs font-bold text-emerald-300 font-luxury uppercase tracking-wider">¡Descarga Completada!</h4>
-            <p id="successFileName" class="text-xs text-white font-mono truncate">archivo.flac</p>
-            <p id="successFileSize" class="text-[11px] text-slate-400 font-mono">Guardado en tu PC</p>
+      <div id="successBox" class="hidden mt-6 p-5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 flex flex-col gap-4">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3.5 min-w-0">
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <h4 id="successTitle" class="text-xs font-bold text-emerald-300 font-luxury uppercase tracking-wider">¡Descarga Completada!</h4>
+                <span id="badgeLyricsIncluded" class="hidden text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 font-mono">🎤 Letra .LRC sincronizada</span>
+              </div>
+              <p id="successFileName" class="text-xs text-white font-mono truncate">archivo.flac</p>
+              <p id="successFileSize" class="text-[11px] text-slate-400 font-mono">Guardado en tu PC</p>
+            </div>
           </div>
         </div>
 
-        <a id="btnDirectDownload" href="#" download class="px-5 py-2.5 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center gap-2 font-luxury shrink-0">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          <span>Descargar a mi PC</span>
-        </a>
+        <!-- Botones de Acción / Descarga -->
+        <div class="flex flex-wrap items-center gap-2.5 pt-2 border-t border-white/10">
+          <a id="btnDirectDownload" href="#" download class="px-4 py-2.5 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center gap-2 font-luxury">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            <span id="btnDirectDownloadText">Descargar Audio FLAC</span>
+          </a>
+
+          <a id="btnDownloadLrc" href="#" download class="hidden px-4 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black border border-amber-500/40 font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 font-luxury">
+            <span>🎤 Descargar Letra (.lrc)</span>
+          </a>
+
+          <a id="btnDownloadPack" href="#" download class="hidden px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase tracking-wider border border-white/20 transition-all flex items-center gap-2 font-luxury">
+            <span>📦 Pack Completo (FLAC + LRC en ZIP)</span>
+          </a>
+        </div>
       </div>
 
     </div>
@@ -304,7 +320,11 @@
     const successBox = document.getElementById('successBox');
     const successFileName = document.getElementById('successFileName');
     const successFileSize = document.getElementById('successFileSize');
+    const badgeLyricsIncluded = document.getElementById('badgeLyricsIncluded');
     const btnDirectDownload = document.getElementById('btnDirectDownload');
+    const btnDirectDownloadText = document.getElementById('btnDirectDownloadText');
+    const btnDownloadLrc = document.getElementById('btnDownloadLrc');
+    const btnDownloadPack = document.getElementById('btnDownloadPack');
     const searchResultsSection = document.getElementById('searchResultsSection');
     const tracksList = document.getElementById('tracksList');
     const albumsGrid = document.getElementById('albumsGrid');
@@ -450,9 +470,14 @@
               </div>
             </div>
           </div>
-          <button class="btn-dl-track px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[11px] font-luxury flex items-center gap-1 transition-all shrink-0" data-url="${t.url}">
-            <span>Descargar</span>
-          </button>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar solo letra sincronizada (.lrc)">
+              <span>🎤 .LRC</span>
+            </a>
+            <button class="btn-dl-track px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[11px] font-luxury flex items-center gap-1 transition-all" data-url="${t.url}">
+              <span>Descargar</span>
+            </button>
+          </div>
         </div>
       `).join('');
 
@@ -570,10 +595,35 @@
                 successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • Descargando a tu equipo...`;
                 btnDirectDownload.href = res.download_url;
                 btnDirectDownload.setAttribute('download', res.filename);
-                successBox.classList.remove('hidden');
+                btnDirectDownloadText.textContent = res.type === 'album' ? "Descargar Álbum ZIP" : "Descargar Audio FLAC";
 
-                // Disparo de descarga directa al PC del usuario
-                triggerBrowserDownload(res.download_url, res.filename);
+                if (res.has_lyrics && res.lrc_download_url) {
+                  badgeLyricsIncluded.classList.remove('hidden');
+                  btnDownloadLrc.href = res.lrc_download_url;
+                  btnDownloadLrc.setAttribute('download', res.lrc_filename || 'letra.lrc');
+                  btnDownloadLrc.classList.remove('hidden');
+
+                  if (res.pack_download_url) {
+                    btnDownloadPack.href = res.pack_download_url;
+                    btnDownloadPack.setAttribute('download', res.pack_filename);
+                    btnDownloadPack.classList.remove('hidden');
+                  } else {
+                    btnDownloadPack.classList.add('hidden');
+                  }
+
+                  // Descargar automáticamente tanto el FLAC como la letra sincronizada .LRC
+                  triggerBrowserDownload(res.download_url, res.filename);
+                  setTimeout(() => {
+                    triggerBrowserDownload(res.lrc_download_url, res.lrc_filename);
+                  }, 800);
+                } else {
+                  badgeLyricsIncluded.classList.add('hidden');
+                  btnDownloadLrc.classList.add('hidden');
+                  btnDownloadPack.classList.add('hidden');
+                  triggerBrowserDownload(res.download_url, res.filename);
+                }
+
+                successBox.classList.remove('hidden');
                 resolve();
               }
             }

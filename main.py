@@ -10,9 +10,9 @@ import asyncio
 import threading
 import urllib.parse
 from pathlib import Path
-from typing import Optional, Dict, Any, Union, List
+from typing import Optional, Dict, Any, Union, List, Tuple
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -438,7 +438,29 @@ def download_stream_with_progress(track_stream, on_progress=None):
                 on_progress((i + 1) / total)
     return bytes(stream_data), file_extension
 
-def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None) -> Path:
+def safe_get_lyrics(api: TidalApi, track_id: Union[str, int]) -> Optional[Dict[str, Any]]:
+    """Obtiene letras sincronizadas (.lrc) o texto plano desde Tidal de forma segura"""
+    try:
+        url = f"{api.URL}/tracks/{track_id}/lyrics"
+        params = {"countryCode": api.country_code or "CO"}
+        req = api.session.get(url, params=params, timeout=12)
+        if req.status_code == 200:
+            data = req.json()
+            subtitles = data.get("subtitles") or ""
+            plain_lyrics = data.get("lyrics") or ""
+            if subtitles or plain_lyrics:
+                return {
+                    "has_lyrics": True,
+                    "is_synced": bool(subtitles),
+                    "subtitles": subtitles,
+                    "lyrics": plain_lyrics,
+                    "text": subtitles if subtitles else plain_lyrics
+                }
+    except Exception as e:
+        logger.debug(f"[TIDAL] Error consultando letras para {track_id}: {e}")
+    return None
+
+def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None) -> Tuple[Path, Optional[Path]]:
     try:
         track_stream = api.getTrackStream(track.id, quality_mode)
     except Exception:
@@ -475,22 +497,24 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
     if res.returncode != 0 or not final_flac_file.exists():
         raise Exception("Fallo en la remuxación a FLAC")
 
-    # Letras sincronizadas (.lrc)
+    # Letras sincronizadas (.lrc) oficiales
     lyrics_text = ""
-    try:
-        lyrics_obj = api.getLyrics(track.id)
-        if lyrics_obj:
-            lyrics_text = getattr(lyrics_obj, "subtitles", "") or getattr(lyrics_obj, "lyrics", "") or ""
-            if getattr(lyrics_obj, "subtitles", None):
-                lrc_path = target_dir / f"{base_name}.lrc"
-                with open(lrc_path, "w", encoding="utf-8") as f:
-                    f.write(lyrics_obj.subtitles)
-    except Exception:
-        pass
+    lrc_file_path: Optional[Path] = None
+    lyr_info = safe_get_lyrics(api, track.id)
+    if lyr_info and lyr_info.get("has_lyrics"):
+        lyrics_text = lyr_info.get("text", "")
+        lrc_file_path = target_dir / f"{base_name}.lrc"
+        try:
+            with open(lrc_file_path, "w", encoding="utf-8") as f_lrc:
+                f_lrc.write(lyrics_text)
+            logger.info(f"[TIDAL] Letra sincronizada (.lrc) guardada: {lrc_file_path.name}")
+        except Exception as e:
+            logger.warning(f"Error escribiendo archivo .lrc: {e}")
+            lrc_file_path = None
 
     # Metadatos ID3 / Vorbis
     if on_subprogress:
-        on_subprogress(0.95, "Incrustando metadatos y carátula...")
+        on_subprogress(0.95, "Incrustando metadatos, letras y carátula...")
 
     try:
         artist_str = track.artist.name if track.artist else ""
@@ -507,7 +531,7 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
     if on_subprogress:
         on_subprogress(1.0, "Pista lista")
 
-    return final_flac_file
+    return final_flac_file, lrc_file_path
 
 
 def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mode: str):
@@ -533,7 +557,7 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
             tasks[task_id]["percent"] = round(pct * 100, 1)
             tasks[task_id]["status"] = f"{msg} ({int(pct*100)}%)"
 
-        final_flac_file = download_single_flac_track(
+        final_flac_file, lrc_file = download_single_flac_track(
             api=api,
             track=track,
             target_dir=task_dir,
@@ -544,6 +568,23 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
 
         filesize = final_flac_file.stat().st_size
         filename = final_flac_file.name
+
+        has_lrc = bool(lrc_file and lrc_file.exists())
+        lrc_filename = lrc_file.name if has_lrc else None
+
+        # Empaquetar opcionalmente un Pack ZIP con el FLAC y el archivo .LRC juntos
+        zip_pack_name = None
+        zip_pack_url = None
+        if has_lrc:
+            try:
+                zip_pack_name = f"{final_flac_file.stem} (FLAC + Letra).zip"
+                zip_pack_path = task_dir / zip_pack_name
+                with zipfile.ZipFile(zip_pack_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(final_flac_file, final_flac_file.name)
+                    zf.write(lrc_file, lrc_file.name)
+                zip_pack_url = f"/api/download/{task_id}/{urllib.parse.quote(zip_pack_name)}"
+            except Exception as ex:
+                logger.warning(f"Error empaquetando pack flac+lrc: {ex}")
 
         tasks[task_id]["completed"] = True
         tasks[task_id]["percent"] = 100.0
@@ -557,6 +598,11 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
             "filesize": format_size(filesize),
             "quality": track.audioQuality,
             "download_url": f"/api/download/{task_id}/{urllib.parse.quote(filename)}",
+            "has_lyrics": has_lrc,
+            "lrc_filename": lrc_filename,
+            "lrc_download_url": f"/api/download/{task_id}/{urllib.parse.quote(lrc_filename)}" if has_lrc else None,
+            "pack_filename": zip_pack_name,
+            "pack_download_url": zip_pack_url,
         }
     except Exception as e:
         logger.error(f"[TIDAL] Error en tarea {task_id}: {e}")
@@ -616,8 +662,8 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
             except Exception as e:
                 logger.error(f"[TIDAL ALBUM] Error en pista {track.title}: {e}")
 
-        # Empaquetar todo el álbum en un archivo .ZIP
-        tasks[task_id]["status"] = "Empaquetando álbum en archivo .ZIP..."
+        # Empaquetar todo el álbum en un archivo .ZIP (incluye FLACs, letras .LRC y cover.jpg)
+        tasks[task_id]["status"] = "Empaquetando álbum y letras en archivo .ZIP..."
         tasks[task_id]["percent"] = 95.0
 
         zip_filename = f"{album_folder_name}.zip"
@@ -632,7 +678,7 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
 
         tasks[task_id]["completed"] = True
         tasks[task_id]["percent"] = 100.0
-        tasks[task_id]["status"] = "¡Álbum completado y empaquetado en .ZIP!"
+        tasks[task_id]["status"] = "¡Álbum completado con letras y portada en .ZIP!"
         tasks[task_id]["result"] = {
             "type": "album",
             "album_title": album.title,
@@ -646,6 +692,32 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
         tasks[task_id]["error"] = str(e)
         tasks[task_id]["status"] = f"Error: {str(e)}"
         tasks[task_id]["completed"] = True
+
+
+@app.get("/api/tidal/lyrics/download/{track_id}")
+async def download_track_lyrics_direct(track_id: str):
+    """Descarga directa del archivo de letra sincronizada (.lrc) para cualquier canción"""
+    api = get_active_tidal_api()
+    try:
+        track = api.getTrack(track_id)
+        lyr_info = safe_get_lyrics(api, track_id)
+        if not lyr_info or not lyr_info.get("has_lyrics"):
+            raise HTTPException(status_code=404, detail="Esta canción no cuenta con letras en Tidal.")
+
+        artist_name = clean_filename(track.artist.name if track.artist else "Artista")
+        track_title = clean_filename(track.title)
+        filename = f"{artist_name} - {track_title}.lrc"
+        content = lyr_info["text"]
+
+        return Response(
+            content=content.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error obteniendo letra: {str(e)}")
 
 
 @app.post("/api/tidal/download")
@@ -700,7 +772,7 @@ async def get_task_status(task_id: str):
 def cleanup_task_dir(task_id: str):
     """Limpia el directorio temporal de la tarea después de que el usuario lo descarga"""
     def _delayed_delete():
-        time.sleep(120)  # Espera 2 minutos para asegurar que la descarga del navegador haya terminado
+        time.sleep(300)  # Espera 5 minutos para permitir descargar tanto el FLAC como el LRC o Pack
         task_dir = TEMP_DIR / task_id
         if task_dir.exists():
             shutil.rmtree(task_dir, ignore_errors=True)
@@ -728,9 +800,14 @@ async def download_file_by_task(task_id: str, filename: str, background_tasks: B
             raise HTTPException(status_code=404, detail="Archivo temporal no encontrado.")
 
     ext = file_path.suffix.lower()
-    media_type = "audio/flac" if ext == ".flac" else "application/zip"
+    if ext == ".flac":
+        media_type = "audio/flac"
+    elif ext in [".lrc", ".txt"]:
+        media_type = "text/plain; charset=utf-8"
+    else:
+        media_type = "application/zip"
 
-    # Programar la limpieza automática del disco
+    # Programar la limpieza automática del disco a los 5 minutos
     background_tasks.add_task(cleanup_task_dir, task_id)
 
     return FileResponse(

@@ -6,3 +6,4 @@ temp_downloads/
 .venv/
 venv/
 *.log
+*.sqlite
