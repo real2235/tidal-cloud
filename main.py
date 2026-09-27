@@ -20,6 +20,23 @@ from pydantic import BaseModel
 import requests
 import uvicorn
 
+BASE_DIR = Path(__file__).resolve().parent
+
+# Asegurar que tiddl use siempre el directorio de la aplicación
+if not os.environ.get("TIDDL_PATH"):
+    os.environ["TIDDL_PATH"] = str(BASE_DIR)
+
+# Sincronizar tiddl.json entre BASE_DIR y Home si uno de los dos existe
+try:
+    _local_cfg = BASE_DIR / "tiddl.json"
+    _home_cfg = Path.home() / "tiddl.json"
+    if _local_cfg.exists() and not _home_cfg.exists():
+        shutil.copy2(_local_cfg, _home_cfg)
+    elif _home_cfg.exists() and not _local_cfg.exists():
+        shutil.copy2(_home_cfg, _local_cfg)
+except Exception:
+    pass
+
 # Tidal dependencies
 from tiddl.config import Config as TidalConfig, AuthConfig as TidalAuthConfig, CONFIG_PATH
 from tiddl.auth import getDeviceAuth, get_auth_credentials, AUTH_URL
@@ -39,7 +56,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TidalCloud")
 
-BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 TEMP_DIR = BASE_DIR / "temp_downloads"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -49,18 +65,23 @@ def init_tidal_env_config():
     raw_env = os.environ.get("TIDAL_CONFIG_JSON", "").strip()
     if not raw_env:
         return
+    if (raw_env.startswith("'") and raw_env.endswith("'")) or (raw_env.startswith('"') and raw_env.endswith('"')):
+        raw_env = raw_env[1:-1].strip()
     try:
         data = json.loads(raw_env)
-        cfg = TidalConfig.fromFile()
-        
-        # Soportar si el usuario pegó el archivo completo o solo el objeto auth
-        if "auth" in data and isinstance(data["auth"], dict):
-            auth_data = data["auth"]
-        elif isinstance(data, dict):
-            auth_data = data
-        else:
+        # Si contiene 'auth' o el tiddl.json completo
+        if isinstance(data, dict) and "auth" in data and isinstance(data["auth"], dict):
+            with open(BASE_DIR / "tiddl.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            try:
+                shutil.copy2(BASE_DIR / "tiddl.json", Path.home() / "tiddl.json")
+            except Exception:
+                pass
+            logger.info("[TIDAL] Archivo tiddl.json completo configurado desde TIDAL_CONFIG_JSON.")
             return
 
+        cfg = TidalConfig.fromFile()
+        auth_data = data.get("auth", data) if isinstance(data, dict) else {}
         token = auth_data.get("token") or auth_data.get("access_token")
         if token:
             cfg.auth = TidalAuthConfig(
@@ -71,11 +92,44 @@ def init_tidal_env_config():
                 country_code=str(auth_data.get("country_code", "CO") or "CO"),
             )
             cfg.save()
+            try:
+                shutil.copy2(CONFIG_PATH, BASE_DIR / "tiddl.json")
+                shutil.copy2(CONFIG_PATH, Path.home() / "tiddl.json")
+            except Exception:
+                pass
             logger.info(f"[TIDAL] Credenciales aplicadas exitosamente para usuario ID: {cfg.auth.user_id} (País: {cfg.auth.country_code})")
     except Exception as e:
         logger.error(f"[TIDAL] Error procesando TIDAL_CONFIG_JSON: {e}")
 
 init_tidal_env_config()
+
+def ensure_tidal_auth_loaded(cfg: TidalConfig) -> TidalConfig:
+    if cfg.auth.token:
+        return cfg
+    # Reintento 1: Cargar directamente tiddl.json local
+    for path in [BASE_DIR / "tiddl.json", Path.home() / "tiddl.json"]:
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                auth_d = d.get("auth") if isinstance(d, dict) and "auth" in d else d
+                token = auth_d.get("token") or auth_d.get("access_token") if isinstance(auth_d, dict) else None
+                if token:
+                    cfg.auth = TidalAuthConfig(
+                        token=token,
+                        refresh_token=auth_d.get("refresh_token", ""),
+                        expires=int(auth_d.get("expires", 0)) or (int(time.time()) + 86400 * 30),
+                        user_id=str(auth_d.get("user_id", "")),
+                        country_code=str(auth_d.get("country_code", "CO") or "CO"),
+                    )
+                    cfg.save()
+                    logger.info(f"[TIDAL] Cuenta cargada automáticamente desde {path}")
+                    return cfg
+            except Exception as e:
+                logger.error(f"[TIDAL] Error leyendo {path}: {e}")
+    # Reintento 2: Intentar variable de entorno de nuevo
+    init_tidal_env_config()
+    return TidalConfig.fromFile()
 
 
 # Tareas en memoria (aisladas por sesión/ID)
@@ -179,7 +233,7 @@ def refresh_tidal_oauth_token(refresh_token_str: str) -> Optional[Dict[str, Any]
     return None
 
 def get_active_tidal_api() -> TidalApi:
-    cfg = TidalConfig.fromFile()
+    cfg = ensure_tidal_auth_loaded(TidalConfig.fromFile())
     if not cfg.auth.token:
         raise HTTPException(
             status_code=401,
@@ -208,7 +262,7 @@ def get_active_tidal_api() -> TidalApi:
 async def tidal_status():
     """Verifica si la cuenta de Tidal está conectada"""
     try:
-        cfg = TidalConfig.fromFile()
+        cfg = ensure_tidal_auth_loaded(TidalConfig.fromFile())
         is_logged = bool(cfg.auth.token)
         return {
             "logged_in": is_logged,

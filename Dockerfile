@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    TIDDL_PATH=/app
 
 WORKDIR /app
 
@@ -15,6 +16,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Asegurar que la configuración esté disponible tanto en /app como en /root
+RUN cp /app/tiddl.json /root/tiddl.json 2>/dev/null || true
 
 EXPOSE 8000
 

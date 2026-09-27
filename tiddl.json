@@ -1,0 +1,32 @@
+{
+  "template": {
+    "track": "{artist} - {title}",
+    "video": "{artist} - {title}",
+    "album": "{album_artist}/{album}/{number:02d}. {title}",
+    "playlist": "{playlist}/{playlist_number:02d}. {artist} - {title}"
+  },
+  "download": {
+    "quality": "high",
+    "path": "C:\\Users\\Steven Millan\\Music\\Tiddl",
+    "threads": 4,
+    "singles_filter": "none",
+    "embed_lyrics": false,
+    "download_video": false,
+    "scan_path": "C:\\Users\\Steven Millan\\Music\\Tiddl",
+    "save_playlist_m3u": false
+  },
+  "cover": {
+    "save": false,
+    "size": 1280,
+    "filename": "cover.jpg"
+  },
+  "auth": {
+    "token": "eyJraWQiOiJ2OU1GbFhqWSIsImFsZyI6IkVTMjU2In0.eyJ0eXBlIjoibzJfYWNjZXNzIiwidWlkIjoyMDkzNjAxNTksInNjb3BlIjoicl91c3Igd191c3Igd19zdWIiLCJnVmVyIjowLCJzVmVyIjowLCJjaWQiOjEzMzE5LCJjYyI6IkNPIiwiYXQiOiJJTlRFUk5BTCIsImV4cCI6MTc5MDQ4MzEyNywic2lkIjoiZDVhZTQ0OTEtZTQxYi00ZWI4LWIwOWQtZTE5ZDEzMjY1YjVjIiwiaXNzIjoiaHR0cHM6Ly9hdXRoLnRpZGFsLmNvbS92MSJ9.aibJcS3eouyZNeBBWjU9VugjYedoEgiV2z-T2DVqEZlF_rkCPHy_ZVsbwvOd7w-yjLvLy0-6tFwBlBc02Rnipw",
+    "refresh_token": "eyJraWQiOiJoUzFKYTdVMCIsImFsZyI6IkVTNTEyIn0.eyJ0eXBlIjoibzJfcmVmcmVzaCIsInVpZCI6MjA5MzYwMTU5LCJzY29wZSI6InJfdXNyIHdfdXNyIHdfc3ViIiwiY2lkIjoxMzMxOSwic1ZlciI6MCwiZ1ZlciI6MCwiaXNzIjoiaHR0cHM6Ly9hdXRoLnRpZGFsLmNvbS92MSJ9.AC-2To4AegLXQm9xdq6VEWx4XVmhQsid1iwFlQl-vCvj449Qw_LCipdeQ08z4sFq9KunqvwTzYUlC5LBhQZvXZ6QABHH9X9MzJ2Iq6IXPpDzwjdINQHrsdA2MNNC5q9QOwTl1Xie7w98x_mhogPqbY5WPdTM-7xuSVDb9QMsH0VPAOhM",
+    "expires": 1790483002,
+    "user_id": "209360159",
+    "country_code": "CO"
+  },
+  "omit_cache": false,
+  "update_mtime": false
+}
