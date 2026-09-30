@@ -882,6 +882,26 @@ async def get_album_tracks(album_id: str):
         raise HTTPException(status_code=400, detail=f"Error obteniendo canciones del álbum: {str(e)}")
 
 
+@app.get("/api/tidal/stream-preview")
+async def tidal_stream_preview(id: str):
+    """Retorna la URL directa de streaming para preescucha de canciones de Tidal"""
+    api = get_active_tidal_api()
+    try:
+        def get_stream():
+            s = api.getTrackStream(id, "LOW")
+            urls, _ = parseTrackStream(s)
+            return urls[0] if urls else None
+
+        loop = asyncio.get_event_loop()
+        url = await loop.run_in_executor(None, get_stream)
+        if not url:
+            raise HTTPException(status_code=404, detail="No se pudo obtener el audio de preescucha.")
+        return {"url": url}
+    except Exception as e:
+        logger.error(f"[TIDAL STREAM] Error obteniendo preescucha de {id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error obteniendo preescucha: {str(e)}")
+
+
 @app.post("/api/tidal/download")
 async def download_tidal(req: TidalDownloadRequest):
     """Inicia la descarga de audio en FLAC auténtico en segundo plano"""

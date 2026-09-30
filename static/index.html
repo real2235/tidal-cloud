@@ -515,6 +515,12 @@
             </div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
+            <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${t.cover || ''}', this)"
+              title="Escuchar muestra (Preescucha)"
+              class="btn-tidal-preview w-8 h-8 rounded-xl bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center shrink-0 transition-all border border-white/10 shadow-sm"
+              data-track-id="${t.id}">
+              <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
             <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar solo letra sincronizada (.lrc)">
               <span>🎤 .LRC</span>
             </a>
@@ -660,6 +666,12 @@
             <div class="flex items-center gap-1.5 shrink-0">
               <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">${t.quality === 'HI_RES_LOSSLESS' ? 'Hi-Res' : 'FLAC'}</span>
               <span class="text-[10px] text-stone-400 font-mono hidden sm:inline mr-1">${t.duration}</span>
+              <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${data.cover || ''}', this)"
+                title="Escuchar muestra (Preescucha)"
+                class="btn-tidal-preview w-7 h-7 rounded-lg bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center shrink-0 transition-all border border-white/10 shadow-sm"
+                data-track-id="${t.id}">
+                <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              </button>
               <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2 py-1 rounded-lg bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar letra sincronizada (.lrc)">
                 <span>🎤 .LRC</span>
               </a>
@@ -866,6 +878,171 @@
       checkAccountStatus();
       alert("Cuenta desvinculada.");
     };
+
+    // ==========================================
+    // PREESCUCHA TIDAL (AUDIO PREVIEW ENGINE)
+    // ==========================================
+    let currentPreviewTrackId = null;
+    const previewAudio = document.getElementById('tidalPreviewAudio');
+    const previewBar = document.getElementById('tidalPreviewPlayerBar');
+    const previewCover = document.getElementById('previewPlayerCover');
+    const previewTitle = document.getElementById('previewPlayerTitle');
+    const previewArtist = document.getElementById('previewPlayerArtist');
+    const previewTime = document.getElementById('previewPlayerTime');
+    const previewSeeker = document.getElementById('previewPlayerSeeker');
+    const btnPreviewPlayPause = document.getElementById('btnPreviewPlayerPlayPause');
+    const previewPlayIcon = document.getElementById('previewPlayerPlayIcon');
+    const btnPreviewClose = document.getElementById('btnPreviewPlayerClose');
+
+    function formatAudioTime(seconds) {
+      if (isNaN(seconds) || seconds < 0) return "0:00";
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    function updatePreviewButtonsState(isPlaying) {
+      if (previewPlayIcon) {
+        if (isPlaying) {
+          previewPlayIcon.innerHTML = `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`;
+        } else {
+          previewPlayIcon.innerHTML = `<polygon points="5 3 19 12 5 21 5 3"/>`;
+        }
+      }
+      document.querySelectorAll('.btn-tidal-preview').forEach(b => {
+        const tid = b.dataset.trackId;
+        if (tid === currentPreviewTrackId && isPlaying) {
+          b.classList.add('bg-amber-400', 'text-black');
+          b.classList.remove('bg-white/10', 'text-white');
+          b.innerHTML = `<svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+        } else {
+          b.classList.remove('bg-amber-400', 'text-black');
+          b.classList.add('bg-white/10', 'text-white');
+          b.innerHTML = `<svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+        }
+      });
+    }
+
+    async function toggleTidalPreview(trackId, titleEnc, artistEnc, coverUrl, btnElem) {
+      const title = decodeURIComponent(titleEnc);
+      const artist = decodeURIComponent(artistEnc);
+
+      if (currentPreviewTrackId === trackId && previewAudio && !previewAudio.paused) {
+        previewAudio.pause();
+        updatePreviewButtonsState(false);
+        return;
+      }
+      if (currentPreviewTrackId === trackId && previewAudio && previewAudio.paused && previewAudio.src) {
+        previewAudio.play();
+        updatePreviewButtonsState(true);
+        return;
+      }
+
+      currentPreviewTrackId = trackId;
+      if (previewTitle) previewTitle.textContent = title;
+      if (previewArtist) previewArtist.textContent = artist;
+      if (previewCover) previewCover.src = coverUrl || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E';
+
+      if (previewBar) {
+        previewBar.classList.remove('translate-y-36', 'opacity-0', 'pointer-events-none');
+      }
+
+      if (btnElem) {
+        btnElem.innerHTML = `<div class="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>`;
+      }
+
+      try {
+        const res = await fetch(`/api/tidal/stream-preview?id=${trackId}`);
+        const data = await res.json();
+        if (!res.ok || !data.url) throw new Error(data.detail || "Error obteniendo audio");
+
+        previewAudio.src = data.url;
+        await previewAudio.play();
+        updatePreviewButtonsState(true);
+      } catch (err) {
+        alert("No se pudo reproducir la preescucha: " + err.message);
+        updatePreviewButtonsState(false);
+      }
+    }
+
+    if (previewAudio) {
+      previewAudio.ontimeupdate = () => {
+        if (!previewAudio.duration) return;
+        const pct = (previewAudio.currentTime / previewAudio.duration) * 100;
+        if (previewSeeker) previewSeeker.value = pct;
+        if (previewTime) previewTime.textContent = `${formatAudioTime(previewAudio.currentTime)} / ${formatAudioTime(previewAudio.duration)}`;
+      };
+      previewAudio.onended = () => {
+        updatePreviewButtonsState(false);
+      };
+      previewAudio.onpause = () => {
+        updatePreviewButtonsState(false);
+      };
+      previewAudio.onplay = () => {
+        updatePreviewButtonsState(true);
+      };
+    }
+
+    if (previewSeeker) {
+      previewSeeker.oninput = () => {
+        if (previewAudio && previewAudio.duration) {
+          previewAudio.currentTime = (previewSeeker.value / 100) * previewAudio.duration;
+        }
+      };
+    }
+
+    if (btnPreviewPlayPause) {
+      btnPreviewPlayPause.onclick = () => {
+        if (!previewAudio || !previewAudio.src) return;
+        if (previewAudio.paused) previewAudio.play();
+        else previewAudio.pause();
+      };
+    }
+
+    if (btnPreviewClose) {
+      btnPreviewClose.onclick = () => {
+        if (previewAudio) {
+          previewAudio.pause();
+          previewAudio.src = '';
+        }
+        currentPreviewTrackId = null;
+        updatePreviewButtonsState(false);
+        if (previewBar) {
+          previewBar.classList.add('translate-y-36', 'opacity-0', 'pointer-events-none');
+        }
+      };
+    }
   </script>
+
+  <!-- Floating Audio Preview Player Bar (Cloud) -->
+  <div id="tidalPreviewPlayerBar" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-lg bg-stone-950/95 backdrop-blur-xl border border-amber-500/40 rounded-2xl p-3.5 shadow-2xl shadow-black/80 flex items-center gap-3.5 transition-all duration-300 translate-y-36 opacity-0 pointer-events-none">
+    <img id="previewPlayerCover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23111622\'/%3E%3C/svg%3E" class="w-12 h-12 rounded-xl object-cover border border-amber-500/20 shrink-0 bg-stone-900" />
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center justify-between gap-2 mb-1">
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 border border-amber-400/30 uppercase">PREESCUCHA</span>
+            <h4 id="previewPlayerTitle" class="text-xs font-bold text-white truncate font-luxury">Título</h4>
+          </div>
+          <p id="previewPlayerArtist" class="text-[10px] text-amber-200/80 truncate">Artista</p>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="text-[9px] font-mono text-stone-400" id="previewPlayerTime">0:00 / 0:00</span>
+          <button id="btnPreviewPlayerClose" class="p-1 rounded-lg hover:bg-white/10 text-stone-400 hover:text-white" title="Cerrar reproductor">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="btnPreviewPlayerPlayPause" class="w-7 h-7 rounded-full bg-amber-400 hover:bg-amber-300 text-black flex items-center justify-center shrink-0 transition-transform active:scale-95 shadow-md">
+          <svg id="previewPlayerPlayIcon" class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+        <div class="relative flex-1 flex items-center">
+          <input type="range" id="previewPlayerSeeker" min="0" max="100" value="0" step="0.1" class="w-full accent-amber-400 h-1 bg-stone-800 rounded-lg cursor-pointer">
+        </div>
+      </div>
+    </div>
+    <audio id="tidalPreviewAudio" class="hidden" preload="none"></audio>
+  </div>
 </body>
 </html>
