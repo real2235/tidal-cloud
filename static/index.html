@@ -304,6 +304,50 @@
     </div>
   </div>
 
+  <!-- Modal de Canciones del Álbum -->
+  <div id="albumModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
+    <div class="glass-card max-w-2xl w-full max-h-[90vh] flex flex-col rounded-3xl border border-amber-500/30 overflow-hidden shadow-2xl">
+      <!-- Header del Modal -->
+      <div class="p-5 sm:p-6 border-b border-white/10 flex items-start justify-between gap-4 shrink-0 bg-stone-950/70">
+        <div class="flex items-center gap-4 min-w-0">
+          <img id="albumModalCover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23111622'/%3E%3C/svg%3E" class="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover border border-amber-500/30 bg-stone-900 shrink-0 shadow-lg" />
+          <div class="min-w-0">
+            <span class="text-[10px] uppercase font-bold tracking-widest text-amber-400 font-luxury">Álbum de Tidal</span>
+            <h3 id="albumModalTitle" class="text-base sm:text-lg font-bold text-white font-luxury truncate">Nombre del Álbum</h3>
+            <p id="albumModalArtist" class="text-xs sm:text-sm text-stone-300 truncate">Artista</p>
+            <div class="flex items-center gap-2 sm:gap-3 mt-1.5 text-[11px] text-stone-400 font-mono">
+              <span id="albumModalTracksCount">0 canciones</span>
+              <span>•</span>
+              <span id="albumModalDuration">--:--</span>
+              <span id="albumModalYear" class="hidden">• <span></span></span>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="btnAlbumModalDownloadAll" class="px-3 py-2 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 font-luxury">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            <span class="hidden sm:inline">Descargar ZIP</span>
+            <span class="sm:hidden">ZIP</span>
+          </button>
+          <button id="btnCloseAlbumModal" class="text-stone-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-all">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Cuerpo del Modal (Pistas desplazables) -->
+      <div id="albumModalBody" class="p-4 sm:p-6 overflow-y-auto flex-1 space-y-2">
+        <div id="albumModalLoading" class="text-center py-12 text-stone-400 font-mono text-xs flex flex-col items-center gap-3">
+          <div class="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+          <span>Cargando lista de canciones de Tidal...</span>
+        </div>
+        <div id="albumModalTracksList" class="space-y-1.5">
+          <!-- Pistas renderizadas dinámicamente -->
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Audio Player Flotante -->
   <audio id="audioPreview" class="hidden"></audio>
 
@@ -496,23 +540,31 @@
       });
     }
 
-    // Render de Álbumes
+    // Render de Álbumes con visualizador de canciones (doble clic o clic en portada)
     function renderAlbums(albums) {
       if (albums.length === 0) {
         albumsGrid.innerHTML = `<div class="col-span-4 text-center py-8 text-xs text-stone-500">No se encontraron álbumes.</div>`;
         return;
       }
       albumsGrid.innerHTML = albums.map(a => `
-        <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all">
-          <div class="relative mb-2">
-            <img src="${a.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900" />
+        <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all cursor-pointer" ondblclick="openAlbumModal('${a.id}')" title="Doble clic para desplegar lista de canciones">
+          <div class="relative mb-2 overflow-hidden rounded-xl" onclick="openAlbumModal('${a.id}')">
+            <img src="${a.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
             <span class="absolute top-2 right-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-black/80 text-amber-300 font-mono border border-amber-400/30">Álbum</span>
+            <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-all p-2 text-center pointer-events-none">
+              <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-black text-[10px] font-extrabold font-luxury shadow-lg">
+                👁️ Ver Canciones
+              </span>
+              <span class="text-[9px] text-stone-300 mt-1 font-mono">Doble clic o clic</span>
+            </div>
           </div>
-          <h4 class="text-xs font-bold text-white truncate font-luxury mb-0.5">${a.title}</h4>
+          <h4 class="text-xs font-bold text-white truncate font-luxury mb-0.5" onclick="openAlbumModal('${a.id}')">${a.title}</h4>
           <p class="text-[11px] text-stone-400 truncate mb-2">${a.artist}</p>
-          <div class="flex items-center justify-between pt-2 border-t border-white/5">
-            <span class="text-[10px] text-stone-500 font-mono">${a.tracks_count || '?'} canciones</span>
-            <button class="btn-dl-album px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury transition-all" data-url="${a.url}">
+          <div class="flex items-center justify-between pt-2 border-t border-white/5" onclick="event.stopPropagation()">
+            <button onclick="openAlbumModal('${a.id}')" class="text-[10px] text-amber-400/90 hover:text-amber-300 font-mono flex items-center gap-1 transition-colors">
+              <span>📋 ${a.tracks_count || '?'} canciones</span>
+            </button>
+            <button class="btn-dl-album px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury transition-all" data-url="${a.url}" title="Descargar álbum completo en ZIP">
               <span>ZIP FLAC</span>
             </button>
           </div>
@@ -520,8 +572,114 @@
       `).join('');
 
       document.querySelectorAll('.btn-dl-album').forEach(b => {
-        b.onclick = () => startDownload(b.dataset.url);
+        b.onclick = (e) => {
+          e.stopPropagation();
+          startDownload(b.dataset.url);
+        };
       });
+    }
+
+    // Modal de Canciones del Álbum (Despliegue interactivo)
+    const albumModal = document.getElementById('albumModal');
+    const albumModalCover = document.getElementById('albumModalCover');
+    const albumModalTitle = document.getElementById('albumModalTitle');
+    const albumModalArtist = document.getElementById('albumModalArtist');
+    const albumModalTracksCount = document.getElementById('albumModalTracksCount');
+    const albumModalDuration = document.getElementById('albumModalDuration');
+    const albumModalYear = document.getElementById('albumModalYear');
+    const albumModalLoading = document.getElementById('albumModalLoading');
+    const albumModalTracksList = document.getElementById('albumModalTracksList');
+    const btnAlbumModalDownloadAll = document.getElementById('btnAlbumModalDownloadAll');
+    const btnCloseAlbumModal = document.getElementById('btnCloseAlbumModal');
+    let currentAlbumModalUrl = null;
+
+    if (btnCloseAlbumModal) {
+      btnCloseAlbumModal.onclick = () => albumModal.classList.add('hidden');
+    }
+    if (albumModal) {
+      albumModal.onclick = (e) => {
+        if (e.target === albumModal) albumModal.classList.add('hidden');
+      };
+    }
+
+    async function openAlbumModal(albumId) {
+      if (!albumId) return;
+      albumModal.classList.remove('hidden');
+      albumModalLoading.classList.remove('hidden');
+      albumModalLoading.innerHTML = `
+        <div class="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+        <span>Cargando lista de canciones de Tidal...</span>
+      `;
+      albumModalTracksList.innerHTML = '';
+
+      try {
+        const res = await fetch(`/api/tidal/album/${albumId}/tracks`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error obteniendo canciones del álbum");
+
+        currentAlbumModalUrl = data.url || `https://tidal.com/browse/album/${albumId}`;
+        albumModalTitle.textContent = data.title;
+        albumModalArtist.textContent = data.artist;
+        albumModalTracksCount.textContent = `${data.tracks_count || (data.tracks ? data.tracks.length : 0)} canciones`;
+        albumModalDuration.textContent = data.duration || '--:--';
+        if (data.cover) {
+          albumModalCover.src = data.cover;
+        } else {
+          albumModalCover.src = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E';
+        }
+
+        if (data.release_date) {
+          const year = data.release_date.split('-')[0];
+          albumModalYear.querySelector('span').textContent = year;
+          albumModalYear.classList.remove('hidden');
+        } else {
+          albumModalYear.classList.add('hidden');
+        }
+
+        btnAlbumModalDownloadAll.onclick = () => {
+          albumModal.classList.add('hidden');
+          startDownload(currentAlbumModalUrl);
+        };
+
+        albumModalLoading.classList.add('hidden');
+
+        if (!data.tracks || data.tracks.length === 0) {
+          albumModalTracksList.innerHTML = `<div class="text-center py-6 text-stone-500 text-xs font-mono">No se encontraron pistas disponibles en este álbum.</div>`;
+          return;
+        }
+
+        albumModalTracksList.innerHTML = data.tracks.map((t, idx) => `
+          <div class="p-2.5 rounded-xl hover:bg-white/5 border border-white/5 flex items-center justify-between gap-3 group transition-colors">
+            <div class="flex items-center gap-3 min-w-0 flex-1">
+              <span class="w-6 text-center text-xs font-mono font-bold text-stone-500 group-hover:text-amber-400">${t.track_number || (idx + 1)}</span>
+              <div class="min-w-0 flex-1">
+                <h5 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h5>
+                <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">${t.quality === 'HI_RES_LOSSLESS' ? 'Hi-Res' : 'FLAC'}</span>
+              <span class="text-[10px] text-stone-400 font-mono hidden sm:inline mr-1">${t.duration}</span>
+              <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2 py-1 rounded-lg bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar letra sincronizada (.lrc)">
+                <span>🎤 .LRC</span>
+              </a>
+              <button class="btn-dl-modal-track px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury flex items-center gap-1 transition-all" data-url="${t.url}">
+                <span>⬇ FLAC</span>
+              </button>
+            </div>
+          </div>
+        `).join('');
+
+        albumModalTracksList.querySelectorAll('.btn-dl-modal-track').forEach(b => {
+          b.onclick = () => {
+            albumModal.classList.add('hidden');
+            startDownload(b.dataset.url);
+          };
+        });
+
+      } catch (err) {
+        albumModalLoading.innerHTML = `<span class="text-rose-400 font-mono text-xs">Error al cargar canciones: ${err.message}</span>`;
+      }
     }
 
     function updateBatchBar() {
@@ -590,37 +748,57 @@
                 reject(new Error(task.error));
               } else if (task.result) {
                 const res = task.result;
-                successTitle.textContent = res.type === 'album' ? "¡Álbum Completado en .ZIP!" : "¡Canción FLAC Lista!";
-                successFileName.textContent = res.filename;
-                successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • Descargando a tu equipo...`;
-                btnDirectDownload.href = res.download_url;
-                btnDirectDownload.setAttribute('download', res.filename);
-                btnDirectDownloadText.textContent = res.type === 'album' ? "Descargar Álbum ZIP" : "Descargar Audio FLAC";
-
-                if (res.has_lyrics && res.lrc_download_url) {
+                
+                if (res.type === 'album') {
+                  successTitle.textContent = "¡Álbum Completado en .ZIP!";
+                  successFileName.textContent = res.filename;
+                  successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • Descargando a tu equipo...`;
+                  btnDirectDownload.href = res.download_url;
+                  btnDirectDownload.setAttribute('download', res.filename);
+                  btnDirectDownloadText.textContent = "Descargar Álbum ZIP";
                   badgeLyricsIncluded.classList.remove('hidden');
-                  btnDownloadLrc.href = res.lrc_download_url;
-                  btnDownloadLrc.setAttribute('download', res.lrc_filename || 'letra.lrc');
-                  btnDownloadLrc.classList.remove('hidden');
-
-                  if (res.pack_download_url) {
-                    btnDownloadPack.href = res.pack_download_url;
-                    btnDownloadPack.setAttribute('download', res.pack_filename);
-                    btnDownloadPack.classList.remove('hidden');
-                  } else {
-                    btnDownloadPack.classList.add('hidden');
-                  }
-
-                  // Descargar automáticamente tanto el FLAC como la letra sincronizada .LRC
-                  triggerBrowserDownload(res.download_url, res.filename);
-                  setTimeout(() => {
-                    triggerBrowserDownload(res.lrc_download_url, res.lrc_filename);
-                  }, 800);
-                } else {
-                  badgeLyricsIncluded.classList.add('hidden');
+                  badgeLyricsIncluded.textContent = "📦 Todas las canciones y letras sincronizadas (.LRC) incluidas en el ZIP";
                   btnDownloadLrc.classList.add('hidden');
                   btnDownloadPack.classList.add('hidden');
                   triggerBrowserDownload(res.download_url, res.filename);
+                } else {
+                  // Canción individual
+                  successTitle.textContent = "¡Canción FLAC Lista!";
+                  successFileName.textContent = res.filename;
+                  successFileSize.textContent = `Tamaño: ${res.filesize || ''} • Descargando a tu equipo...`;
+
+                  if (res.has_lyrics && res.pack_download_url) {
+                    badgeLyricsIncluded.classList.remove('hidden');
+                    badgeLyricsIncluded.textContent = "🎤 Letra .LRC sincronizada incluida";
+
+                    // Disparar descarga automática del Pack ZIP (FLAC + Letra .LRC juntos en 1 solo archivo seguro)
+                    triggerBrowserDownload(res.pack_download_url, res.pack_filename);
+
+                    // Botón principal: Descargar Pack ZIP
+                    btnDirectDownload.href = res.pack_download_url;
+                    btnDirectDownload.setAttribute('download', res.pack_filename);
+                    btnDirectDownloadText.textContent = "📦 Descargar Pack (FLAC + Letra .LRC)";
+
+                    // Botón secundario 1: Solo Audio FLAC
+                    btnDownloadPack.href = res.download_url;
+                    btnDownloadPack.setAttribute('download', res.filename);
+                    btnDownloadPack.innerHTML = `<span>🎵 Solo Audio FLAC</span>`;
+                    btnDownloadPack.classList.remove('hidden');
+
+                    // Botón secundario 2: Solo Letra LRC
+                    btnDownloadLrc.href = res.lrc_download_url;
+                    btnDownloadLrc.setAttribute('download', res.lrc_filename || 'letra.lrc');
+                    btnDownloadLrc.innerHTML = `<span>🎤 Solo Letra (.LRC)</span>`;
+                    btnDownloadLrc.classList.remove('hidden');
+                  } else {
+                    badgeLyricsIncluded.classList.add('hidden');
+                    btnDownloadLrc.classList.add('hidden');
+                    btnDownloadPack.classList.add('hidden');
+                    btnDirectDownload.href = res.download_url;
+                    btnDirectDownload.setAttribute('download', res.filename);
+                    btnDirectDownloadText.textContent = "Descargar Audio FLAC";
+                    triggerBrowserDownload(res.download_url, res.filename);
+                  }
                 }
 
                 successBox.classList.remove('hidden');

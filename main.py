@@ -177,6 +177,13 @@ def clean_filename(name: str) -> str:
         name = name.replace(ch, "_")
     return name.strip(". ")
 
+def make_content_disposition(filename: str, disposition: str = "attachment") -> str:
+    """Genera un header Content-Disposition compatible con RFC 6266 / RFC 5987 seguro para caracteres UTF-8"""
+    import re
+    ascii_name = re.sub(r'[^\x20-\x7E]', '_', filename).replace('"', '')
+    encoded_name = urllib.parse.quote(filename, encoding='utf-8')
+    return f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
+
 def format_duration(seconds: Optional[Union[int, float]]) -> str:
     """Convierte segundos a formato MM:SS"""
     if not seconds:
@@ -232,7 +239,7 @@ def refresh_tidal_oauth_token(refresh_token_str: str) -> Optional[Dict[str, Any]
         logger.error(f"[TIDAL] Error refrescando token: {e}")
     return None
 
-def get_active_tidal_api() -> TidalApi:
+def get_active_tidal_api(force_refresh: bool = False) -> TidalApi:
     cfg = ensure_tidal_auth_loaded(TidalConfig.fromFile())
     if not cfg.auth.token:
         raise HTTPException(
@@ -240,8 +247,8 @@ def get_active_tidal_api() -> TidalApi:
             detail="No se ha vinculado la cuenta de Tidal. Por favor conecta una cuenta primero.",
         )
 
-    if cfg.auth.refresh_token and time.time() > cfg.auth.expires:
-        logger.info("[TIDAL] Token expirado, renovando con refresh_token...")
+    if force_refresh or (cfg.auth.refresh_token and time.time() > cfg.auth.expires):
+        logger.info("[TIDAL] Token expirado o renovación forzada con refresh_token...")
         refreshed = refresh_tidal_oauth_token(cfg.auth.refresh_token)
         if refreshed and "access_token" in refreshed:
             cfg.auth.token = refreshed["access_token"]
@@ -250,6 +257,11 @@ def get_active_tidal_api() -> TidalApi:
                 cfg.auth.refresh_token = refreshed["refresh_token"]
             cfg.save()
             logger.info("[TIDAL] Token renovado con éxito.")
+        elif not force_refresh:
+            raise HTTPException(
+                status_code=401,
+                detail="La sesión de Tidal expiró. Vuelve a iniciar sesión.",
+            )
 
     return TidalApi(
         token=cfg.auth.token,
@@ -461,10 +473,36 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int]) -> Optional[Dict[s
     return None
 
 def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None) -> Tuple[Path, Optional[Path]]:
-    try:
-        track_stream = api.getTrackStream(track.id, quality_mode)
-    except Exception:
-        track_stream = api.getTrackStream(track.id, "LOSSLESS")
+    track_stream = None
+    stream_err = None
+
+    for attempt in range(2):
+        try:
+            track_stream = api.getTrackStream(track.id, quality_mode)
+            break
+        except Exception as e:
+            stream_err = e
+            try:
+                track_stream = api.getTrackStream(track.id, "LOSSLESS")
+                break
+            except Exception as e2:
+                stream_err = e2
+
+            err_str = (str(e) + " " + str(e2)).lower()
+            if ("privileges" in err_str or "403" in err_str or "401" in err_str) and attempt == 0:
+                logger.warning(f"[TIDAL] Advertencia de streaming ({e}). Pausando 2s, renovando sesión y reintentando...")
+                time.sleep(2.0)
+                try:
+                    api = get_active_tidal_api(force_refresh=True)
+                except Exception as ref_err:
+                    logger.error(f"[TIDAL] Error forzando refresco de token: {ref_err}")
+            else:
+                if attempt == 1:
+                    raise Exception(f"No se pudo obtener el stream de audio: {stream_err}")
+                time.sleep(1.0)
+
+    if track_stream is None:
+        raise Exception(f"Fallo al obtener stream de audio para {getattr(track, 'title', 'pista')}: {stream_err}")
 
     def stream_cb(frac: float):
         if on_subprogress:
@@ -492,9 +530,9 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
     import subprocess
     cmd = ["ffmpeg", "-y", "-i", str(raw_file), str(final_flac_file)]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if raw_file.exists():
+    if res.returncode == 0 and final_flac_file.exists():
         raw_file.unlink(missing_ok=True)
-    if res.returncode != 0 or not final_flac_file.exists():
+    else:
         raise Exception("Fallo en la remuxación a FLAC")
 
     # Letras sincronizadas (.lrc) oficiales
@@ -712,12 +750,57 @@ async def download_track_lyrics_direct(track_id: str):
         return Response(
             content=content.encode("utf-8"),
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            headers={"Content-Disposition": make_content_disposition(filename)}
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo letra: {str(e)}")
+
+
+@app.get("/api/tidal/album/{album_id}/tracks")
+async def get_album_tracks(album_id: str):
+    """Devuelve la lista detallada de canciones de un álbum para visualización y descarga directa"""
+    api = get_active_tidal_api()
+    try:
+        album = api.getAlbum(album_id)
+        cover_url = None
+        if album.cover:
+            c_uid = album.cover.replace("-", "/")
+            cover_url = f"https://resources.tidal.com/images/{c_uid}/640x640.jpg"
+
+        items_res = api.getAlbumItems(album_id, limit=100)
+        tracks = []
+        for it in (items_res.items or []):
+            if hasattr(it, "item") and it.item:
+                t = it.item
+                artists = ", ".join([a.name for a in t.artists]) if t.artists else (t.artist.name if t.artist else "Desconocido")
+                tracks.append({
+                    "id": str(t.id),
+                    "track_number": getattr(t, "trackNumber", None),
+                    "volume_number": getattr(t, "volumeNumber", 1),
+                    "title": t.title,
+                    "artist": artists,
+                    "duration": format_duration(t.duration),
+                    "duration_seconds": t.duration,
+                    "quality": getattr(t, "audioQuality", "LOSSLESS"),
+                    "url": f"https://tidal.com/browse/track/{t.id}",
+                })
+
+        return {
+            "id": str(album.id),
+            "title": album.title,
+            "artist": album.artist.name if album.artist else (album.artists[0].name if album.artists else "Varios Artistas"),
+            "cover": cover_url,
+            "release_date": str(album.releaseDate) if getattr(album, "releaseDate", None) else "",
+            "tracks_count": len(tracks),
+            "duration": format_duration(album.duration) if getattr(album, "duration", None) else "--:--",
+            "tracks": tracks,
+            "url": f"https://tidal.com/browse/album/{album.id}",
+        }
+    except Exception as e:
+        logger.error(f"[TIDAL] Error obteniendo canciones del álbum {album_id}: {e}")
+        raise HTTPException(status_code=400, detail=f"Error obteniendo canciones del álbum: {str(e)}")
 
 
 @app.post("/api/tidal/download")
@@ -814,7 +897,7 @@ async def download_file_by_task(task_id: str, filename: str, background_tasks: B
         path=str(file_path),
         filename=file_path.name,
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{file_path.name}"'},
+        headers={"Content-Disposition": make_content_disposition(file_path.name)},
     )
 
 
