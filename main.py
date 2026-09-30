@@ -372,52 +372,60 @@ async def tidal_search(
 
     def do_search():
         import tiddl.api
-        return api.fetch(
-            tiddl.api.Search,
-            "search",
-            {"countryCode": api.country_code, "query": term, "limit": 30},
+        params = {"countryCode": api.country_code, "query": term, "limit": 30}
+        req = api.session.get(
+            f"{api.URL}/search",
+            params=params,
             expire_after=tiddl.api.EXPIRE_IMMEDIATELY,
         )
+        if req.status_code != 200:
+            raise Exception(f"Tidal API error ({req.status_code})")
+        return req.json()
 
     loop = asyncio.get_event_loop()
-    s = await loop.run_in_executor(None, do_search)
+    s_data = await loop.run_in_executor(None, do_search)
 
     tracks = []
-    if search_type in ["all", "tracks", "track", "songs", "song"] and hasattr(s, "tracks") and s.tracks and hasattr(s.tracks, "items") and s.tracks.items:
-        for t in s.tracks.items[:30]:
-            c_uid = t.album.cover.replace("-", "/") if (t.album and t.album.cover) else None
-            cover = f"https://resources.tidal.com/images/{c_uid}/640x640.jpg" if c_uid else None
-            artists = ", ".join([a.name for a in t.artists]) if t.artists else (t.artist.name if t.artist else "Desconocido")
-            album_title = t.album.title if t.album else "Sencillo"
+    tracks_raw = s_data.get("tracks", {}).get("items", []) if isinstance(s_data, dict) else []
+    if search_type in ["all", "tracks", "track", "songs", "song"]:
+        for t in tracks_raw[:30]:
+            album_info = t.get("album") or {}
+            c_uid = album_info.get("cover")
+            cover = f"https://resources.tidal.com/images/{c_uid.replace('-', '/')}/640x640.jpg" if c_uid else None
+            artist_list = t.get("artists") or []
+            artists = ", ".join([a.get("name", "") for a in artist_list if a.get("name")]) if artist_list else (t.get("artist", {}).get("name") if t.get("artist") else "Desconocido")
+            album_title = album_info.get("title") or "Sencillo"
             tracks.append({
-                "id": str(t.id),
-                "title": t.title,
+                "id": str(t.get("id")),
+                "title": t.get("title"),
                 "artist": artists,
                 "album": album_title,
-                "duration": format_duration(t.duration),
-                "duration_seconds": t.duration,
-                "quality": t.audioQuality,
+                "duration": format_duration(t.get("duration")),
+                "duration_seconds": t.get("duration"),
+                "quality": t.get("audioQuality", "LOSSLESS"),
                 "cover": cover,
                 "cover_url": cover,
-                "url": f"https://tidal.com/browse/track/{t.id}",
+                "url": f"https://tidal.com/browse/track/{t.get('id')}",
             })
 
     albums = []
-    if search_type in ["all", "albums", "album"] and hasattr(s, "albums") and s.albums and hasattr(s.albums, "items") and s.albums.items:
-        for a in s.albums.items[:25]:
-            c_uid = a.cover.replace("-", "/") if a.cover else None
-            cover = f"https://resources.tidal.com/images/{c_uid}/640x640.jpg" if c_uid else None
-            artists = ", ".join([ar.name for ar in a.artists]) if a.artists else (a.artist.name if a.artist else "Desconocido")
+    albums_raw = s_data.get("albums", {}).get("items", []) if isinstance(s_data, dict) else []
+    if search_type in ["all", "albums", "album"]:
+        for a in albums_raw[:25]:
+            c_uid = a.get("cover")
+            cover = f"https://resources.tidal.com/images/{c_uid.replace('-', '/')}/640x640.jpg" if c_uid else None
+            artist_list = a.get("artists") or []
+            artists = ", ".join([ar.get("name", "") for ar in artist_list if ar.get("name")]) if artist_list else (a.get("artist", {}).get("name") if a.get("artist") else "Desconocido")
             albums.append({
-                "id": str(a.id),
-                "title": a.title,
+                "id": str(a.get("id")),
+                "title": a.get("title"),
                 "artist": artists,
-                "tracks_count": a.numberOfTracks,
-                "duration": format_duration(a.duration),
-                "release_date": str(a.releaseDate) if getattr(a, "releaseDate", None) else "",
+                "tracks_count": a.get("numberOfTracks"),
+                "duration": format_duration(a.get("duration")),
+                "release_date": str(a.get("releaseDate")) if a.get("releaseDate") else "",
                 "cover": cover,
                 "cover_url": cover,
-                "url": f"https://tidal.com/browse/album/{a.id}",
+                "url": f"https://tidal.com/browse/album/{a.get('id')}",
             })
 
     return {"tracks": tracks, "albums": albums}
@@ -450,12 +458,13 @@ def download_stream_with_progress(track_stream, on_progress=None):
                 on_progress((i + 1) / total)
     return bytes(stream_data), file_extension
 
-def safe_get_lyrics(api: TidalApi, track_id: Union[str, int]) -> Optional[Dict[str, Any]]:
-    """Obtiene letras sincronizadas (.lrc) o texto plano desde Tidal de forma segura"""
+def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> Optional[Dict[str, Any]]:
+    """Obtiene letras sincronizadas (.lrc) o texto plano desde Tidal con fallback global a LRCLIB"""
+    # 1. Tidal oficial
     try:
         url = f"{api.URL}/tracks/{track_id}/lyrics"
         params = {"countryCode": api.country_code or "CO"}
-        req = api.session.get(url, params=params, timeout=12)
+        req = api.session.get(url, params=params, timeout=8)
         if req.status_code == 200:
             data = req.json()
             subtitles = data.get("subtitles") or ""
@@ -469,7 +478,77 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int]) -> Optional[Dict[s
                     "text": subtitles if subtitles else plain_lyrics
                 }
     except Exception as e:
-        logger.debug(f"[TIDAL] Error consultando letras para {track_id}: {e}")
+        logger.debug(f"[TIDAL] Error consultando letras oficiales para {track_id}: {e}")
+
+    # 2. Fallback a LRCLIB (Servicio global de letras sincronizadas .lrc)
+    try:
+        if not track:
+            try:
+                track = api.getTrack(track_id)
+            except Exception:
+                track = None
+
+        if track:
+            track_title = getattr(track, "title", "")
+            artist_name = ""
+            if hasattr(track, "artist") and track.artist:
+                artist_name = track.artist.name
+            elif hasattr(track, "artists") and track.artists:
+                artist_name = track.artists[0].name
+
+            album_title = ""
+            if hasattr(track, "album") and track.album:
+                album_title = getattr(track.album, "title", "")
+
+            duration = getattr(track, "duration", None)
+
+            clean_title = re.sub(r"\s*[\(\[](remastered|explicit|deluxe|bonus|version|anniversary|edit|live|mono|stereo).*?[\)\]]", "", track_title, flags=re.IGNORECASE).strip()
+            clean_title = re.sub(r"\s*-\s*(remastered|deluxe|bonus).*?$", "", clean_title, flags=re.IGNORECASE).strip() or track_title
+
+            p = {"track_name": clean_title, "artist_name": artist_name}
+            if album_title:
+                p["album_name"] = album_title
+            if duration:
+                p["duration"] = int(duration)
+
+            res = requests.get("https://lrclib.net/api/get", params=p, headers={"User-Agent": "TidalFLACStudio/2.0"}, timeout=3.5)
+            if res.status_code == 200:
+                d = res.json()
+                synced = d.get("syncedLyrics")
+                plain = d.get("plainLyrics")
+                if synced or plain:
+                    return {
+                        "has_lyrics": True,
+                        "is_synced": bool(synced),
+                        "subtitles": synced or "",
+                        "lyrics": plain or "",
+                        "text": synced if synced else plain
+                    }
+
+            # Búsqueda abierta si no hubo coincidencia exacta
+            res_sr = requests.get("https://lrclib.net/api/search", params={"q": f"{artist_name} {clean_title}"}, headers={"User-Agent": "TidalFLACStudio/2.0"}, timeout=3.5)
+            if res_sr.status_code == 200:
+                items = res_sr.json()
+                if isinstance(items, list) and items:
+                    for it in items:
+                        if it.get("syncedLyrics"):
+                            return {
+                                "has_lyrics": True,
+                                "is_synced": True,
+                                "subtitles": it["syncedLyrics"],
+                                "lyrics": it.get("plainLyrics") or "",
+                                "text": it["syncedLyrics"]
+                            }
+                    return {
+                        "has_lyrics": True,
+                        "is_synced": False,
+                        "subtitles": "",
+                        "lyrics": items[0].get("plainLyrics") or "",
+                        "text": items[0].get("plainLyrics") or ""
+                    }
+    except Exception as e:
+        logger.debug(f"[LRCLIB] Fallback error para {track_id}: {e}")
+
     return None
 
 def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None) -> Tuple[Path, Optional[Path]]:
@@ -535,10 +614,10 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
     else:
         raise Exception("Fallo en la remuxación a FLAC")
 
-    # Letras sincronizadas (.lrc) oficiales
+    # Letras sincronizadas (.lrc) oficiales o fallback global
     lyrics_text = ""
     lrc_file_path: Optional[Path] = None
-    lyr_info = safe_get_lyrics(api, track.id)
+    lyr_info = safe_get_lyrics(api, track.id, track=track)
     if lyr_info and lyr_info.get("has_lyrics"):
         lyrics_text = lyr_info.get("text", "")
         lrc_file_path = target_dir / f"{base_name}.lrc"
@@ -738,9 +817,9 @@ async def download_track_lyrics_direct(track_id: str):
     api = get_active_tidal_api()
     try:
         track = api.getTrack(track_id)
-        lyr_info = safe_get_lyrics(api, track_id)
+        lyr_info = safe_get_lyrics(api, track_id, track=track)
         if not lyr_info or not lyr_info.get("has_lyrics"):
-            raise HTTPException(status_code=404, detail="Esta canción no cuenta con letras en Tidal.")
+            raise HTTPException(status_code=404, detail="No se encontraron letras disponibles para esta canción.")
 
         artist_name = clean_filename(track.artist.name if track.artist else "Artista")
         track_title = clean_filename(track.title)
