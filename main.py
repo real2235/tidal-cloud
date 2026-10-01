@@ -161,10 +161,12 @@ class SearchRequest(BaseModel):
 class TidalDownloadRequest(BaseModel):
     url: str
     quality: Optional[str] = "master"  # 'master' (24-bit) o 'hifi' (16-bit)
+    naming_format: Optional[str] = "full"  # 'full' o 'title_only'
 
 class TidalBatchDownloadRequest(BaseModel):
     track_ids: List[str]
     quality: Optional[str] = "master"
+    naming_format: Optional[str] = "full" 
 
 class TidalInfoRequest(BaseModel):
     url: str
@@ -462,6 +464,33 @@ def download_stream_with_progress(track_stream, on_progress=None):
                 on_progress((i + 1) / total)
     return bytes(stream_data), file_extension
 
+def fetch_netease_lyrics(artist: str, title: str) -> Optional[str]:
+    """Capa 3 de Respaldo: Consulta la base de datos de NetEase Cloud Music para letras sincronizadas"""
+    try:
+        clean_t = re.sub(r"\s*[\(\[](remastered|explicit|deluxe|bonus|version|anniversary|edit|live|mono|stereo|feat\..*?|ft\..*?).*?[\)\]]", "", title, flags=re.IGNORECASE).strip()
+        clean_t = re.sub(r"\s*-\s*(remastered|deluxe|bonus).*?$", "", clean_t, flags=re.IGNORECASE).strip() or title
+        clean_a = artist.split(',')[0].split('&')[0].strip()
+        q = urllib.parse.quote(f"{clean_a} {clean_t}".strip())
+        search_url = f"https://music.163.com/api/search/get/web?s={q}&type=1&limit=3"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        r = requests.get(search_url, headers=headers, timeout=6)
+        if r.status_code == 200:
+            data = r.json()
+            songs = data.get("result", {}).get("songs", [])
+            if songs:
+                song_id = songs[0]["id"]
+                l_url = f"https://music.163.com/api/song/lyric?os=pc&id={song_id}&lv=-1&kv=-1&tv=-1"
+                l_res = requests.get(l_url, headers=headers, timeout=6)
+                if l_res.status_code == 200:
+                    lyric = l_res.json().get("lrc", {}).get("lyric", "")
+                    if lyric and "[" in lyric:
+                        logger.info(f"[NETEASE] Letras sincronizadas encontradas para '{clean_a} - {clean_t}'")
+                        return lyric
+    except Exception as e:
+        logger.debug(f"[NETEASE] Error buscando letras: {e}")
+    return None
+
+
 def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> Optional[Dict[str, Any]]:
     """Obtiene letras sincronizadas (.lrc) o texto plano desde Tidal con fallback global a LRCLIB"""
     # 1. Tidal oficial
@@ -553,9 +582,31 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> O
     except Exception as e:
         logger.debug(f"[LRCLIB] Fallback error para {track_id}: {e}")
 
+    # 3. Capa de Respaldo: NetEase Cloud Music
+    try:
+        if track:
+            t_title = getattr(track, "title", "")
+            t_art = ""
+            if hasattr(track, "artist") and track.artist:
+                t_art = track.artist.name
+            elif hasattr(track, "artists") and track.artists:
+                t_art = track.artists[0].name
+            
+            netease_text = fetch_netease_lyrics(t_art, t_title)
+            if netease_text:
+                return {
+                    "has_lyrics": True,
+                    "is_synced": True,
+                    "subtitles": netease_text,
+                    "lyrics": netease_text,
+                    "text": netease_text,
+                }
+    except Exception as e_ne:
+        logger.debug(f"[NETEASE] Fallback error: {e_ne}")
+
     return None
 
-def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None) -> Tuple[Path, Optional[Path]]:
+def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None, naming_format: str = "full") -> Tuple[Path, Optional[Path]]:
     track_stream = None
     stream_err = None
 
@@ -655,7 +706,7 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
     return final_flac_file, lrc_file_path
 
 
-def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mode: str):
+def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mode: str, naming_format: str = "full"):
     task_dir = TEMP_DIR / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -685,6 +736,7 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
             quality_mode=quality_mode,
             cover_data=cover_data,
             on_subprogress=on_subprogress,
+            naming_format=naming_format,
         )
 
         filesize = final_flac_file.stat().st_size
@@ -732,7 +784,7 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
         tasks[task_id]["completed"] = True
 
 
-def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mode: str):
+def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mode: str, naming_format: str = "full"):
     task_dir = TEMP_DIR / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -779,6 +831,7 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
                     quality_mode=quality_mode,
                     cover_data=cover_data,
                     on_subprogress=on_track_prog,
+                    naming_format=naming_format,
                 )
             except Exception as e:
                 logger.error(f"[TIDAL ALBUM] Error en pista {track.title}: {e}")
@@ -815,7 +868,7 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
         tasks[task_id]["completed"] = True
 
 
-def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, quality_mode: str):
+def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, quality_mode: str, naming_format: str = "full"):
     task_dir = TEMP_DIR / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     batch_folder_name = f"Tidal_Coleccion_{len(track_ids)}_canciones"
@@ -859,6 +912,7 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
                     quality_mode=quality_mode,
                     cover_data=cover_data,
                     on_subprogress=on_track_prog,
+                    naming_format=naming_format,
                 )
             except Exception as e:
                 logger.error(f"[TIDAL BATCH] Error en pista ID {trk_id}: {e}")
@@ -1010,16 +1064,17 @@ async def download_tidal(req: TidalDownloadRequest):
         "created_at": time.time(),
     }
 
+    naming_format = req.naming_format if req.naming_format in ["full", "title_only"] else "full"
     if res_type == "track":
         threading.Thread(
             target=run_tidal_track_task,
-            args=(task_id, res_id, api, quality_mode),
+            args=(task_id, res_id, api, quality_mode, naming_format),
             daemon=True,
         ).start()
     else:
         threading.Thread(
             target=run_tidal_album_task,
-            args=(task_id, res_id, api, quality_mode),
+            args=(task_id, res_id, api, quality_mode, naming_format),
             daemon=True,
         ).start()
 
@@ -1048,9 +1103,10 @@ async def download_tidal_batch(req: TidalBatchDownloadRequest):
         "created_at": time.time(),
     }
 
+    naming_format = req.naming_format if req.naming_format in ["full", "title_only"] else "full"
     threading.Thread(
         target=run_tidal_batch_task,
-        args=(task_id, req.track_ids, api, quality_mode),
+        args=(task_id, req.track_ids, api, quality_mode, naming_format),
         daemon=True,
     ).start()
 
