@@ -526,7 +526,7 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> O
             artist_name = ""
             if hasattr(track, "artist") and track.artist:
                 artist_name = track.artist.name
-            elif hasattr(track, "artists") and track.artists:
+            elif hasattr(track, "artists") and track.artists and len(track.artists) > 0:
                 artist_name = track.artists[0].name
 
             album_title = ""
@@ -535,16 +535,18 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> O
 
             duration = getattr(track, "duration", None)
 
-            clean_title = re.sub(r"\s*[\(\[](remastered|explicit|deluxe|bonus|version|anniversary|edit|live|mono|stereo).*?[\)\]]", "", track_title, flags=re.IGNORECASE).strip()
+            clean_title = re.sub(r"\s*[\(\[](remastered|explicit|deluxe|bonus|version|anniversary|edit|live|mono|stereo|feat\..*?|ft\..*?).*?[\)\]]", "", track_title, flags=re.IGNORECASE).strip()
             clean_title = re.sub(r"\s*-\s*(remastered|deluxe|bonus).*?$", "", clean_title, flags=re.IGNORECASE).strip() or track_title
 
-            p = {"track_name": clean_title, "artist_name": artist_name}
+            clean_artist = artist_name.split(',')[0].split('&')[0].split(' feat.')[0].strip() or artist_name
+
+            p = {"track_name": clean_title, "artist_name": clean_artist}
             if album_title:
                 p["album_name"] = album_title
             if duration:
                 p["duration"] = int(duration)
 
-            res = requests.get("https://lrclib.net/api/get", params=p, headers={"User-Agent": "TidalFLACStudio/2.0"}, timeout=3.5)
+            res = requests.get("https://lrclib.net/api/get", params=p, headers={"User-Agent": "TidalFLACStudio/2.0"}, timeout=5.0)
             if res.status_code == 200:
                 d = res.json()
                 synced = d.get("syncedLyrics")
@@ -559,7 +561,7 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> O
                     }
 
             # Búsqueda abierta si no hubo coincidencia exacta
-            res_sr = requests.get("https://lrclib.net/api/search", params={"q": f"{artist_name} {clean_title}"}, headers={"User-Agent": "TidalFLACStudio/2.0"}, timeout=3.5)
+            res_sr = requests.get("https://lrclib.net/api/search", params={"q": f"{clean_artist} {clean_title}"}, headers={"User-Agent": "TidalFLACStudio/2.0"}, timeout=5.0)
             if res_sr.status_code == 200:
                 items = res_sr.json()
                 if isinstance(items, list) and items:
@@ -582,31 +584,43 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> O
     except Exception as e:
         logger.debug(f"[LRCLIB] Fallback error para {track_id}: {e}")
 
-    # 3. Capa de Respaldo: NetEase Cloud Music
+    # 3. Fallback a Lyrics.ovh (Texto plano)
     try:
         if track:
             t_title = getattr(track, "title", "")
-            t_art = ""
-            if hasattr(track, "artist") and track.artist:
-                t_art = track.artist.name
-            elif hasattr(track, "artists") and track.artists:
+            t_art = getattr(track.artist, "name", "") if (hasattr(track, "artist") and track.artist) else ""
+            if not t_art and hasattr(track, "artists") and track.artists and len(track.artists) > 0:
                 t_art = track.artists[0].name
-            
-            netease_text = fetch_netease_lyrics(t_art, t_title)
-            if netease_text:
-                return {
-                    "has_lyrics": True,
-                    "is_synced": True,
-                    "subtitles": netease_text,
-                    "lyrics": netease_text,
-                    "text": netease_text,
-                }
-    except Exception as e_ne:
-        logger.debug(f"[NETEASE] Fallback error: {e_ne}")
+            c_t = re.sub(r"\s*[\(\[].*?[\)\]]", "", t_title).strip() or t_title
+            c_a = t_art.split(',')[0].split('&')[0].split(' feat.')[0].strip() or t_art
+            if c_a and c_t:
+                r_ovh = requests.get(f"https://api.lyrics.ovh/v1/{urllib.parse.quote(c_a)}/{urllib.parse.quote(c_t)}", timeout=5.0)
+                if r_ovh.status_code == 200:
+                    d_ovh = r_ovh.json()
+                    lyr = d_ovh.get("lyrics", "").strip()
+                    if lyr:
+                        return {
+                            "has_lyrics": True,
+                            "is_synced": False,
+                            "subtitles": "",
+                            "lyrics": lyr,
+                            "text": lyr,
+                        }
+    except Exception as e_ovh:
+        logger.debug(f"[LYRICS.OVH] Fallback error: {e_ovh}")
 
     return None
 
-def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_mode: str, cover_data: bytes = b"", on_subprogress=None, naming_format: str = "full") -> Tuple[Path, Optional[Path]]:
+def download_single_flac_track(
+    api: TidalApi,
+    track,
+    target_dir: Path,
+    quality_mode: str,
+    cover_data: bytes = b"",
+    on_subprogress=None,
+    naming_format: str = "full",
+    album_title_fallback: Optional[str] = None
+) -> Tuple[Path, Optional[Path]]:
     track_stream = None
     stream_err = None
 
@@ -644,13 +658,38 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
 
     stream_bytes, file_ext = download_stream_with_progress(track_stream, on_progress=stream_cb)
 
-    artist_name = clean_filename(track.artist.name if track.artist else "Artista")
+    # 1. Artista
+    artist_name = "Artista"
+    if hasattr(track, "artist") and track.artist and getattr(track.artist, "name", None):
+        artist_name = track.artist.name
+    elif hasattr(track, "artists") and track.artists and len(track.artists) > 0 and getattr(track.artists[0], "name", None):
+        artist_name = track.artists[0].name
+    artist_name = clean_filename(artist_name)
+
+    # 2. Álbum
+    album_name = "Album"
+    if hasattr(track, "album") and track.album and getattr(track.album, "title", None):
+        album_name = track.album.title
+    elif album_title_fallback:
+        album_name = album_title_fallback
+    album_name = clean_filename(album_name)
+
+    # 3. Título de la pista
     track_title = clean_filename(track.title)
 
-    if track.trackNumber:
-        base_name = f"{track.trackNumber:02d}. {track_title}"
+    # 4. Número de pista (ej. 01, 02, 15)
+    t_num = getattr(track, "trackNumber", None)
+    try:
+        track_num = f"{int(t_num):02d}" if t_num is not None else "01"
+    except Exception:
+        track_num = "01"
+
+    # Seleccionar nombre base según formato solicitado por el usuario
+    if naming_format == "title_only":
+        base_name = f"{track_title}"
     else:
-        base_name = f"{artist_name} - {track_title}"
+        # Formato: "NOMBRE DEL ARTISTA + NOMBRE DEL ALBUM + NUMERACION + NOMBRE DE LA CANCION"
+        base_name = f"{artist_name} - {album_name} - {track_num} - {track_title}"
 
     raw_file = target_dir / f"{base_name}_temp{file_ext}"
     final_flac_file = target_dir / f"{base_name}.flac"
@@ -697,6 +736,27 @@ def download_single_flac_track(api: TidalApi, track, target_dir: Path, quality_m
             album_artist=artist_str,
             lyrics=lyrics_text,
         )
+
+        # Mejorar tags Vorbis: Letras (SYNCEDLYRICS / UNSYNCEDLYRICS) y Género
+        try:
+            from mutagen.flac import FLAC
+            audio = FLAC(str(final_flac_file))
+            if lyrics_text:
+                audio["UNSYNCEDLYRICS"] = [lyrics_text]
+                audio["SYNCEDLYRICS"] = [lyrics_text]
+            # Género vía iTunes Search API
+            query = f"{track.title} {artist_str}"
+            itunes_url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=song&limit=1"
+            res_gen = requests.get(itunes_url, timeout=3.5)
+            if res_gen.status_code == 200:
+                data_gen = res_gen.json()
+                if data_gen.get("resultCount", 0) > 0:
+                    genre = data_gen["results"][0].get("primaryGenreName")
+                    if genre:
+                        audio["GENRE"] = [genre]
+            audio.save()
+        except Exception as ex_m:
+            logger.debug(f"[METADATA EXT] Advertencia: {ex_m}")
     except Exception as e:
         logger.warning(f"[TIDAL] Aviso metadatos: {e}")
 
@@ -729,6 +789,7 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
             tasks[task_id]["percent"] = round(pct * 100, 1)
             tasks[task_id]["status"] = f"{msg} ({int(pct*100)}%)"
 
+        album_fallback = track.album.title if (hasattr(track, "album") and track.album and getattr(track.album, "title", None)) else "Sencillo"
         final_flac_file, lrc_file = download_single_flac_track(
             api=api,
             track=track,
@@ -737,6 +798,7 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
             cover_data=cover_data,
             on_subprogress=on_subprogress,
             naming_format=naming_format,
+            album_title_fallback=album_fallback,
         )
 
         filesize = final_flac_file.stat().st_size
@@ -832,6 +894,7 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
                     cover_data=cover_data,
                     on_subprogress=on_track_prog,
                     naming_format=naming_format,
+                    album_title_fallback=album.title,
                 )
             except Exception as e:
                 logger.error(f"[TIDAL ALBUM] Error en pista {track.title}: {e}")
@@ -895,15 +958,18 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
                     tasks[task_id]["percent"] = round(cur_pct, 1)
 
                 cover_data = b""
-                if track.album and track.album.cover:
-                    try:
-                        c_uid = track.album.cover.replace("-", "/")
-                        c_url = f"https://resources.tidal.com/images/{c_uid}/1280x1280.jpg"
-                        res_cov = requests.get(c_url, timeout=10)
-                        if res_cov.status_code == 200:
-                            cover_data = res_cov.content
-                    except Exception:
-                        pass
+                album_fallback = None
+                if track.album:
+                    album_fallback = getattr(track.album, "title", None)
+                    if getattr(track.album, "cover", None):
+                        try:
+                            c_uid = track.album.cover.replace("-", "/")
+                            c_url = f"https://resources.tidal.com/images/{c_uid}/1280x1280.jpg"
+                            res_cov = requests.get(c_url, timeout=10)
+                            if res_cov.status_code == 200:
+                                cover_data = res_cov.content
+                        except Exception:
+                            pass
 
                 download_single_flac_track(
                     api=api,
@@ -913,6 +979,7 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
                     cover_data=cover_data,
                     on_subprogress=on_track_prog,
                     naming_format=naming_format,
+                    album_title_fallback=album_fallback,
                 )
             except Exception as e:
                 logger.error(f"[TIDAL BATCH] Error en pista ID {trk_id}: {e}")
@@ -949,7 +1016,7 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
 
 
 @app.get("/api/tidal/lyrics/download/{track_id}")
-async def download_track_lyrics_direct(track_id: str):
+async def download_track_lyrics_direct(track_id: str, naming_format: Optional[str] = "full"):
     """Descarga directa del archivo de letra sincronizada (.lrc) para cualquier canción"""
     api = get_active_tidal_api()
     try:
@@ -958,9 +1025,31 @@ async def download_track_lyrics_direct(track_id: str):
         if not lyr_info or not lyr_info.get("has_lyrics"):
             raise HTTPException(status_code=404, detail="No se encontraron letras disponibles para esta canción.")
 
-        artist_name = clean_filename(track.artist.name if track.artist else "Artista")
+        artist_name = "Artista"
+        if hasattr(track, "artist") and track.artist and getattr(track.artist, "name", None):
+            artist_name = track.artist.name
+        elif hasattr(track, "artists") and track.artists and len(track.artists) > 0 and getattr(track.artists[0], "name", None):
+            artist_name = track.artists[0].name
+        artist_name = clean_filename(artist_name)
+
+        album_name = "Album"
+        if hasattr(track, "album") and track.album and getattr(track.album, "title", None):
+            album_name = track.album.title
+        album_name = clean_filename(album_name)
+
         track_title = clean_filename(track.title)
-        filename = f"{artist_name} - {track_title}.lrc"
+
+        t_num = getattr(track, "trackNumber", None)
+        try:
+            track_num = f"{int(t_num):02d}" if t_num is not None else "01"
+        except Exception:
+            track_num = "01"
+
+        if naming_format == "title_only":
+            filename = f"{track_title}.lrc"
+        else:
+            filename = f"{artist_name} - {album_name} - {track_num} - {track_title}.lrc"
+
         content = lyr_info["text"]
 
         return Response(
