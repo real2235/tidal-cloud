@@ -362,8 +362,16 @@
     <span>Cola (<span id="queueBadgeCount">0</span>)</span>
   </button>
 
-  <!-- Overlay / Fondo Oscuro del Drawer -->
-  <div id="queueDrawerBackdrop" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity duration-300 opacity-0"></div>
+  <!-- Zona de Arrastre Flotante Global (Aparece automáticamente al arrastrar cualquier canción) -->
+  <div id="floatingDropBar" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 transform translate-y-36 opacity-0 flex items-center gap-3.5 px-6 py-3.5 rounded-2xl bg-stone-950/95 border-2 border-dashed border-amber-400 shadow-2xl shadow-amber-500/30 backdrop-blur-2xl text-white select-none">
+    <div class="w-10 h-10 rounded-xl bg-amber-400 text-black flex items-center justify-center font-bold text-lg shrink-0 animate-bounce">
+      📥
+    </div>
+    <div class="pr-2 text-left">
+      <div class="text-xs font-bold text-white font-luxury uppercase tracking-wider">Suelta aquí para añadir a la cola</div>
+      <div class="text-[10px] text-amber-300/80 font-mono">O arrastra hacia el panel de la derecha</div>
+    </div>
+  </div>
 
   <!-- Drawer Lateral Derecho: Cola Persistente de Descargas -->
   <aside id="queueDrawer" class="fixed top-0 right-0 h-full w-full sm:w-[440px] bg-stone-950/95 backdrop-blur-2xl border-l border-amber-500/30 z-50 shadow-2xl flex flex-col transition-transform duration-300 translate-x-full">
@@ -453,6 +461,7 @@
     const progressStatus = document.getElementById('progressStatus');
     const progressTitle = document.getElementById('progressTitle');
     const successBox = document.getElementById('successBox');
+    const successTitle = document.getElementById('successTitle');
     const successFileName = document.getElementById('successFileName');
     const successFileSize = document.getElementById('successFileSize');
     const badgeLyricsIncluded = document.getElementById('badgeLyricsIncluded');
@@ -471,6 +480,8 @@
     const selectedCountText = document.getElementById('selectedCountText');
     const btnDownloadBatch = document.getElementById('btnDownloadBatch');
     const audioPreview = document.getElementById('audioPreview');
+
+    const DEFAULT_COVER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23111622'/%3E%3C/svg%3E";
 
     // Auth Elements
     const authModal = document.getElementById('authModal');
@@ -494,7 +505,7 @@
     // Elementos de la Cola de Descargas
     const queueFloatingToggle = document.getElementById('queueFloatingToggle');
     const queueBadgeCount = document.getElementById('queueBadgeCount');
-    const queueDrawerBackdrop = document.getElementById('queueDrawerBackdrop');
+    const floatingDropBar = document.getElementById('floatingDropBar');
     const queueDrawer = document.getElementById('queueDrawer');
     const queueDrawerCount = document.getElementById('queueDrawerCount');
     const queueTotalItems = document.getElementById('queueTotalItems');
@@ -528,12 +539,35 @@
       } catch (e) {}
     }
 
+    // Toast no intrusivo para confirmar acciones de la cola
+    function showQueueToast(msg) {
+      let toast = document.getElementById('queueToastNotification');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'queueToastNotification';
+        toast.className = 'fixed bottom-20 right-6 z-50 bg-stone-900/95 border border-amber-400/80 text-amber-300 px-4 py-2.5 rounded-xl shadow-2xl font-luxury text-xs flex items-center gap-2 transition-all duration-300 opacity-0 pointer-events-none transform translate-y-2 backdrop-blur-md';
+        document.body.appendChild(toast);
+      }
+      toast.innerHTML = `<span class="text-sm">📦</span> <span>${msg}</span>`;
+      toast.classList.remove('opacity-0', 'translate-y-2');
+      toast.classList.add('opacity-100', 'translate-y-0');
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', 'translate-y-2');
+      }, 2500);
+    }
+
     function addToQueue(track) {
       if (!track || !track.id) return;
+      const isNew = !downloadQueue.has(String(track.id));
       downloadQueue.set(String(track.id), track);
       saveQueueToStorage();
       updateQueueUI();
       syncTrackListButtons();
+      if (isNew) {
+        showQueueToast(`"${track.title}" añadida a la cola`);
+      }
     }
 
     function removeFromQueue(trackId) {
@@ -564,18 +598,19 @@
     function openQueueDrawer() {
       if (!queueDrawer) return;
       queueDrawer.classList.remove('translate-x-full');
-      if (queueDrawerBackdrop) {
-        queueDrawerBackdrop.classList.remove('hidden');
-        setTimeout(() => queueDrawerBackdrop.classList.remove('opacity-0'), 10);
-      }
     }
 
     function closeQueueDrawer() {
       if (!queueDrawer) return;
       queueDrawer.classList.add('translate-x-full');
-      if (queueDrawerBackdrop) {
-        queueDrawerBackdrop.classList.add('opacity-0');
-        setTimeout(() => queueDrawerBackdrop.classList.add('hidden'), 300);
+    }
+
+    function toggleQueueDrawer() {
+      if (!queueDrawer) return;
+      if (queueDrawer.classList.contains('translate-x-full')) {
+        openQueueDrawer();
+      } else {
+        closeQueueDrawer();
       }
     }
 
@@ -608,7 +643,7 @@
             <div class="p-2.5 rounded-2xl bg-stone-900/80 border border-white/5 hover:border-amber-400/30 flex items-center justify-between gap-3 group transition-all">
               <div class="flex items-center gap-3 min-w-0 flex-1">
                 <span class="w-4 text-center text-[10px] font-mono font-bold text-stone-500">${idx + 1}</span>
-                <img src="${t.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-950" />
+                <img src="${t.cover || DEFAULT_COVER}" class="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-950" />
                 <div class="min-w-0 flex-1">
                   <h5 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h5>
                   <p class="text-[10px] text-stone-400 truncate">${t.artist}</p>
@@ -652,7 +687,7 @@
       });
     }
 
-    // Handlers para Drag & Drop
+    // Handlers para Drag & Drop Global y Auto-Revelado de Zona de Soltar
     window.handleTrackDragStart = function(event, trackId) {
       let trk = currentTracks.find(t => String(t.id) === String(trackId)) || 
                 currentAlbumModalTracks.find(t => String(t.id) === String(trackId)) || 
@@ -660,24 +695,91 @@
       if (!trk) return;
       event.dataTransfer.setData('application/json', JSON.stringify(trk));
       event.dataTransfer.effectAllowed = 'copy';
+
+      // Revelar dinámicamente la ventana/barra flotante de arrastre
+      if (floatingDropBar) {
+        floatingDropBar.classList.remove('translate-y-36', 'opacity-0', 'pointer-events-none');
+        floatingDropBar.classList.add('translate-y-0', 'opacity-100');
+      }
       if (queueDropZone) {
         queueDropZone.classList.add('border-amber-400', 'bg-amber-500/20', 'scale-[1.02]');
+      }
+      if (queueFloatingToggle) {
+        queueFloatingToggle.classList.add('border-amber-400', 'scale-110', 'ring-2', 'ring-amber-400/50');
       }
     };
 
     window.handleTrackDragEnd = function(event) {
+      // Ocultar dinámicamente la barra flotante al terminar el arrastre
+      if (floatingDropBar) {
+        floatingDropBar.classList.remove('translate-y-0', 'opacity-100', 'border-amber-300', 'bg-amber-500/20', 'scale-105');
+        floatingDropBar.classList.add('translate-y-36', 'opacity-0', 'pointer-events-none');
+      }
       if (queueDropZone) {
         queueDropZone.classList.remove('border-amber-400', 'bg-amber-500/20', 'scale-[1.02]');
       }
+      if (queueFloatingToggle) {
+        queueFloatingToggle.classList.remove('border-amber-400', 'scale-110', 'ring-2', 'ring-amber-400/50');
+      }
     };
 
-    // Listeners del Drawer y Drop Zone
-    if (queueFloatingToggle) queueFloatingToggle.onclick = openQueueDrawer;
+    // Configurar listeners de Drop en la barra flotante
+    if (floatingDropBar) {
+      floatingDropBar.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        floatingDropBar.classList.add('border-amber-300', 'bg-amber-500/20', 'scale-105');
+      };
+      floatingDropBar.ondragleave = () => {
+        floatingDropBar.classList.remove('border-amber-300', 'bg-amber-500/20', 'scale-105');
+      };
+      floatingDropBar.ondrop = (e) => {
+        e.preventDefault();
+        floatingDropBar.classList.remove('border-amber-300', 'bg-amber-500/20', 'scale-105');
+        floatingDropBar.classList.add('translate-y-36', 'opacity-0', 'pointer-events-none');
+        try {
+          const raw = e.dataTransfer.getData('application/json');
+          if (raw) {
+            const trk = JSON.parse(raw);
+            addToQueue(trk);
+          }
+        } catch (err) {
+          console.error("Error al procesar canción arrastrada:", err);
+        }
+      };
+    }
+
+    // Configurar listeners de Drop sobre el botón flotante de la cola
+    if (queueFloatingToggle) {
+      queueFloatingToggle.onclick = toggleQueueDrawer;
+      queueFloatingToggle.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        queueFloatingToggle.classList.add('scale-125', 'bg-amber-300');
+      };
+      queueFloatingToggle.ondragleave = () => {
+        queueFloatingToggle.classList.remove('scale-125', 'bg-amber-300');
+      };
+      queueFloatingToggle.ondrop = (e) => {
+        e.preventDefault();
+        queueFloatingToggle.classList.remove('scale-125', 'bg-amber-300');
+        try {
+          const raw = e.dataTransfer.getData('application/json');
+          if (raw) {
+            const trk = JSON.parse(raw);
+            addToQueue(trk);
+          }
+        } catch (err) {
+          console.error("Error al procesar canción arrastrada:", err);
+        }
+      };
+    }
+
     if (btnCloseQueueDrawer) btnCloseQueueDrawer.onclick = closeQueueDrawer;
-    if (queueDrawerBackdrop) queueDrawerBackdrop.onclick = closeQueueDrawer;
     if (btnClearQueue) btnClearQueue.onclick = clearQueue;
     if (btnOpenDrawerFromBatch) btnOpenDrawerFromBatch.onclick = openQueueDrawer;
 
+    // Configurar drop en la zona interna del Drawer y en el Drawer completo
     if (queueDropZone) {
       queueDropZone.ondragover = (e) => {
         e.preventDefault();
@@ -698,6 +800,25 @@
           }
         } catch (err) {
           console.error("Error al procesar canción arrastrada:", err);
+        }
+      };
+    }
+
+    if (queueDrawer) {
+      queueDrawer.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      };
+      queueDrawer.ondrop = (e) => {
+        e.preventDefault();
+        try {
+          const raw = e.dataTransfer.getData('application/json');
+          if (raw) {
+            const trk = JSON.parse(raw);
+            addToQueue(trk);
+          }
+        } catch (err) {
+          console.error("Error al procesar canción:", err);
         }
       };
     }
@@ -814,7 +935,7 @@
             ondragend="handleTrackDragEnd(event)">
             <div class="flex items-center gap-3 min-w-0 flex-1">
               <input type="checkbox" class="track-checkbox w-4 h-4 accent-amber-400 rounded cursor-pointer shrink-0" data-id="${t.id}" ${inQueue ? 'checked' : ''} />
-              <img src="${t.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-12 h-12 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-900" />
+              <img src="${t.cover || DEFAULT_COVER}" class="w-12 h-12 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-900" />
               <div class="min-w-0 flex-1">
                 <h4 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h4>
                 <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
@@ -860,7 +981,8 @@
 
       // Eventos del botón rápido "+ Cola"
       document.querySelectorAll('.btn-toggle-queue').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
           const track = tracks.find(t => String(t.id) === String(btn.dataset.id));
           if (track) toggleQueueTrack(track);
         };
@@ -876,7 +998,7 @@
       albumsGrid.innerHTML = albums.map(a => `
         <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all cursor-pointer" ondblclick="openAlbumModal('${a.id}')" title="Doble clic para desplegar lista de canciones">
           <div class="relative mb-2 overflow-hidden rounded-xl" onclick="openAlbumModal('${a.id}')">
-            <img src="${a.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
+            <img src="${a.cover || DEFAULT_COVER}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
             <span class="absolute top-2 right-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-black/80 text-amber-300 font-mono border border-amber-400/30">Álbum</span>
             <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-all p-2 text-center pointer-events-none">
               <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-black text-[10px] font-extrabold font-luxury shadow-lg">
@@ -957,7 +1079,7 @@
         if (data.cover) {
           albumModalCover.src = data.cover;
         } else {
-          albumModalCover.src = 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E';
+          albumModalCover.src = DEFAULT_COVER;
         }
 
         if (data.release_date) {
@@ -1325,7 +1447,7 @@
       currentPreviewTrackId = trackId;
       if (pTitle) pTitle.textContent = title;
       if (pArtist) pArtist.textContent = artist;
-      if (pCover) pCover.src = coverUrl || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E';
+      if (pCover) pCover.src = coverUrl || DEFAULT_COVER;
 
       if (bar) {
         bar.classList.remove('translate-y-36', 'opacity-0', 'pointer-events-none');
