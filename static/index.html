@@ -243,11 +243,14 @@
           </button>
         </div>
 
-        <!-- Barra de selección múltiple -->
-        <div id="batchBar" class="hidden flex items-center gap-3">
-          <span id="selectedCountText" class="text-xs text-amber-300 font-mono">0 seleccionadas</span>
-          <button id="btnDownloadBatch" class="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black border border-amber-500/40 text-xs font-bold font-luxury transition-all">
-            Descargar Seleccionadas
+        <!-- Barra de selección múltiple y cola persistente -->
+        <div id="batchBar" class="hidden flex items-center gap-2">
+          <span id="selectedCountText" class="text-xs text-amber-300 font-mono font-bold">0 en cola</span>
+          <button id="btnOpenDrawerFromBatch" type="button" class="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold font-luxury transition-all flex items-center gap-1.5">
+            <span>📦 Ver Cola</span>
+          </button>
+          <button id="btnDownloadBatch" type="button" class="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black border border-amber-500/40 text-xs font-bold font-luxury transition-all flex items-center gap-1.5">
+            <span>⬇ Descargar Lote (ZIP)</span>
           </button>
         </div>
       </div>
@@ -324,6 +327,11 @@
           </div>
         </div>
         <div class="flex items-center gap-2 shrink-0">
+          <button id="btnAlbumModalAddAllQueue" class="px-2.5 sm:px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black border border-amber-500/40 font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 font-luxury transition-all" title="Añadir todas las canciones a la cola de descargas">
+            <span class="text-sm">➕</span>
+            <span class="hidden sm:inline">Añadir Todas</span>
+            <span class="sm:hidden">+ Cola</span>
+          </button>
           <button id="btnAlbumModalDownloadAll" class="px-3 py-2 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 font-luxury">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
             <span class="hidden sm:inline">Descargar ZIP</span>
@@ -347,6 +355,61 @@
       </div>
     </div>
   </div>
+
+  <!-- Botón Flotante para Abrir la Cola de Descargas (Esquina Inferior Derecha) -->
+  <button id="queueFloatingToggle" class="hidden fixed bottom-6 right-6 z-40 px-4 py-2.5 rounded-2xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-2xl flex items-center gap-2 font-luxury hover:scale-105 active:scale-95 transition-all border border-amber-300/40">
+    <span class="text-base">📦</span>
+    <span>Cola (<span id="queueBadgeCount">0</span>)</span>
+  </button>
+
+  <!-- Overlay / Fondo Oscuro del Drawer -->
+  <div id="queueDrawerBackdrop" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity duration-300 opacity-0"></div>
+
+  <!-- Drawer Lateral Derecho: Cola Persistente de Descargas -->
+  <aside id="queueDrawer" class="fixed top-0 right-0 h-full w-full sm:w-[440px] bg-stone-950/95 backdrop-blur-2xl border-l border-amber-500/30 z-50 shadow-2xl flex flex-col transition-transform duration-300 translate-x-full">
+    <!-- Header del Drawer -->
+    <div class="p-5 border-b border-white/10 flex items-center justify-between gap-3 bg-stone-900/60 shrink-0">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-300 flex items-center justify-center font-bold text-sm shrink-0 border border-amber-400/30">📦</div>
+        <div class="min-w-0">
+          <h3 class="text-sm font-bold text-white font-luxury uppercase tracking-wider truncate">Cola de Descargas</h3>
+          <span id="queueDrawerCount" class="text-[11px] text-amber-300 font-mono">0 canciones seleccionadas</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="btnClearQueue" type="button" class="text-xs text-stone-400 hover:text-rose-400 px-2.5 py-1 rounded-lg hover:bg-white/5 transition-all font-mono" title="Vaciar todas las canciones de la cola">
+          Vaciar
+        </button>
+        <button id="btnCloseQueueDrawer" type="button" class="text-stone-400 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition-all">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Zona Interactiva Drag & Drop -->
+    <div id="queueDropZone" class="m-4 p-4 rounded-2xl border-2 border-dashed border-amber-500/30 bg-amber-500/5 text-center transition-all flex flex-col items-center justify-center gap-1 shrink-0">
+      <span class="text-xl">📥</span>
+      <p class="text-xs font-bold text-amber-200 font-luxury">Arrastra canciones aquí</p>
+      <p class="text-[10px] text-stone-400">Suelta cualquier canción de los resultados para añadirla a tu lista</p>
+    </div>
+
+    <!-- Lista Desplazable de Canciones en la Cola -->
+    <div id="queueTracksList" class="flex-1 overflow-y-auto p-4 space-y-2.5">
+      <!-- Se renderiza dinámicamente -->
+    </div>
+
+    <!-- Footer de Acciones del Drawer -->
+    <div class="p-4 sm:p-5 border-t border-white/10 bg-stone-900/80 space-y-3 shrink-0">
+      <div class="flex items-center justify-between text-xs font-mono text-stone-400">
+        <span>Formato: FLAC + Letras .LRC</span>
+        <span id="queueTotalItems" class="text-amber-300 font-bold">0 pistas</span>
+      </div>
+      <button id="btnDownloadBatchZip" type="button" class="w-full py-3.5 rounded-xl gold-button text-black font-extrabold text-xs uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 font-luxury active:scale-95 transition-all">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        <span>Descargar Colección en ZIP</span>
+      </button>
+    </div>
+  </aside>
 
   <!-- Floating Audio Preview Player Bar (Cloud) -->
   <div id="tidalPreviewPlayerBar" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-lg bg-stone-950/95 backdrop-blur-xl border border-amber-500/40 rounded-2xl p-3.5 shadow-2xl shadow-black/80 flex items-center gap-3.5 transition-all duration-300 translate-y-36 opacity-0 pointer-events-none">
@@ -424,8 +487,220 @@
 
     let currentTracks = [];
     let currentAlbums = [];
-    const selectedTrackIds = new Set();
+    let currentAlbumModalTracks = [];
+    let downloadQueue = new Map(); // trackId -> trackObject
     let authPollTimer = null;
+
+    // Elementos de la Cola de Descargas
+    const queueFloatingToggle = document.getElementById('queueFloatingToggle');
+    const queueBadgeCount = document.getElementById('queueBadgeCount');
+    const queueDrawerBackdrop = document.getElementById('queueDrawerBackdrop');
+    const queueDrawer = document.getElementById('queueDrawer');
+    const queueDrawerCount = document.getElementById('queueDrawerCount');
+    const queueTotalItems = document.getElementById('queueTotalItems');
+    const queueTracksList = document.getElementById('queueTracksList');
+    const queueDropZone = document.getElementById('queueDropZone');
+    const btnCloseQueueDrawer = document.getElementById('btnCloseQueueDrawer');
+    const btnClearQueue = document.getElementById('btnClearQueue');
+    const btnDownloadBatchZip = document.getElementById('btnDownloadBatchZip');
+    const btnOpenDrawerFromBatch = document.getElementById('btnOpenDrawerFromBatch');
+    const btnAlbumModalAddAllQueue = document.getElementById('btnAlbumModalAddAllQueue');
+
+    // ==========================================
+    // PERSISTENCIA DE LA COLA (LOCALSTORAGE)
+    // ==========================================
+    function loadQueueFromStorage() {
+      try {
+        const raw = localStorage.getItem('tidal_download_queue');
+        if (raw) {
+          const arr = JSON.parse(raw);
+          downloadQueue = new Map(arr.map(t => [String(t.id), t]));
+        }
+      } catch (e) {
+        downloadQueue = new Map();
+      }
+    }
+
+    function saveQueueToStorage() {
+      try {
+        const arr = Array.from(downloadQueue.values());
+        localStorage.setItem('tidal_download_queue', JSON.stringify(arr));
+      } catch (e) {}
+    }
+
+    function addToQueue(track) {
+      if (!track || !track.id) return;
+      downloadQueue.set(String(track.id), track);
+      saveQueueToStorage();
+      updateQueueUI();
+      syncTrackListButtons();
+    }
+
+    function removeFromQueue(trackId) {
+      downloadQueue.delete(String(trackId));
+      saveQueueToStorage();
+      updateQueueUI();
+      syncTrackListButtons();
+    }
+
+    function clearQueue() {
+      if (downloadQueue.size === 0) return;
+      if (!confirm("¿Deseas vaciar toda la cola de descargas?")) return;
+      downloadQueue.clear();
+      saveQueueToStorage();
+      updateQueueUI();
+      syncTrackListButtons();
+    }
+
+    function toggleQueueTrack(track) {
+      const tid = String(track.id);
+      if (downloadQueue.has(tid)) {
+        removeFromQueue(tid);
+      } else {
+        addToQueue(track);
+      }
+    }
+
+    function openQueueDrawer() {
+      if (!queueDrawer) return;
+      queueDrawer.classList.remove('translate-x-full');
+      if (queueDrawerBackdrop) {
+        queueDrawerBackdrop.classList.remove('hidden');
+        setTimeout(() => queueDrawerBackdrop.classList.remove('opacity-0'), 10);
+      }
+    }
+
+    function closeQueueDrawer() {
+      if (!queueDrawer) return;
+      queueDrawer.classList.add('translate-x-full');
+      if (queueDrawerBackdrop) {
+        queueDrawerBackdrop.classList.add('opacity-0');
+        setTimeout(() => queueDrawerBackdrop.classList.add('hidden'), 300);
+      }
+    }
+
+    function updateQueueUI() {
+      const count = downloadQueue.size;
+      if (queueBadgeCount) queueBadgeCount.textContent = count;
+      if (queueDrawerCount) queueDrawerCount.textContent = `${count} ${count === 1 ? 'canción seleccionada' : 'canciones seleccionadas'}`;
+      if (queueTotalItems) queueTotalItems.textContent = `${count} ${count === 1 ? 'pista' : 'pistas'}`;
+      if (selectedCountText) selectedCountText.textContent = `${count} en cola`;
+
+      if (count > 0) {
+        if (queueFloatingToggle) queueFloatingToggle.classList.remove('hidden');
+        if (batchBar) batchBar.classList.remove('hidden');
+      } else {
+        if (queueFloatingToggle) queueFloatingToggle.classList.add('hidden');
+        if (batchBar) batchBar.classList.add('hidden');
+      }
+
+      if (queueTracksList) {
+        if (count === 0) {
+          queueTracksList.innerHTML = `
+            <div class="text-center py-12 text-stone-500 flex flex-col items-center gap-3">
+              <div class="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-2xl">📦</div>
+              <p class="text-xs text-stone-300 font-luxury">Tu cola de descargas está vacía</p>
+              <p class="text-[11px] text-stone-500 max-w-[220px]">Busca canciones y haz clic en "+ Cola" o arrástralas aquí para acumularlas.</p>
+            </div>
+          `;
+        } else {
+          queueTracksList.innerHTML = Array.from(downloadQueue.values()).map((t, idx) => `
+            <div class="p-2.5 rounded-2xl bg-stone-900/80 border border-white/5 hover:border-amber-400/30 flex items-center justify-between gap-3 group transition-all">
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <span class="w-4 text-center text-[10px] font-mono font-bold text-stone-500">${idx + 1}</span>
+                <img src="${t.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-11 h-11 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-950" />
+                <div class="min-w-0 flex-1">
+                  <h5 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h5>
+                  <p class="text-[10px] text-stone-400 truncate">${t.artist}</p>
+                  <div class="flex items-center gap-1.5 mt-0.5">
+                    <span class="text-[8px] font-mono font-bold px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300">${t.quality === 'HI_RES_LOSSLESS' ? 'Hi-Res' : 'FLAC'}</span>
+                    <span class="text-[9px] text-stone-500 font-mono">${t.duration || ''}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${t.cover || ''}', this)"
+                  title="Escuchar preescucha"
+                  class="btn-tidal-preview w-7 h-7 rounded-lg bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center transition-all"
+                  data-track-id="${t.id}">
+                  <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>
+                <button onclick="removeFromQueue('${t.id}')" title="Quitar de la cola"
+                  class="w-7 h-7 rounded-lg text-stone-500 hover:text-rose-400 hover:bg-rose-500/10 flex items-center justify-center transition-all">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
+            </div>
+          `).join('');
+        }
+      }
+    }
+
+    function syncTrackListButtons() {
+      document.querySelectorAll('.track-checkbox').forEach(cb => {
+        cb.checked = downloadQueue.has(String(cb.dataset.id));
+      });
+      document.querySelectorAll('.btn-toggle-queue').forEach(btn => {
+        const inQ = downloadQueue.has(String(btn.dataset.id));
+        if (inQ) {
+          btn.className = "btn-toggle-queue px-2.5 py-1.5 rounded-xl bg-amber-400 text-black font-extrabold text-[10px] font-luxury flex items-center gap-1 transition-all shadow-sm";
+          btn.innerHTML = `<span>✓ En Cola</span>`;
+        } else {
+          btn.className = "btn-toggle-queue px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-amber-400/30 text-amber-300 font-extrabold text-[10px] font-luxury flex items-center gap-1 transition-all border border-amber-500/20";
+          btn.innerHTML = `<span>+ Cola</span>`;
+        }
+      });
+    }
+
+    // Handlers para Drag & Drop
+    window.handleTrackDragStart = function(event, trackId) {
+      let trk = currentTracks.find(t => String(t.id) === String(trackId)) || 
+                currentAlbumModalTracks.find(t => String(t.id) === String(trackId)) || 
+                downloadQueue.get(String(trackId));
+      if (!trk) return;
+      event.dataTransfer.setData('application/json', JSON.stringify(trk));
+      event.dataTransfer.effectAllowed = 'copy';
+      if (queueDropZone) {
+        queueDropZone.classList.add('border-amber-400', 'bg-amber-500/20', 'scale-[1.02]');
+      }
+    };
+
+    window.handleTrackDragEnd = function(event) {
+      if (queueDropZone) {
+        queueDropZone.classList.remove('border-amber-400', 'bg-amber-500/20', 'scale-[1.02]');
+      }
+    };
+
+    // Listeners del Drawer y Drop Zone
+    if (queueFloatingToggle) queueFloatingToggle.onclick = openQueueDrawer;
+    if (btnCloseQueueDrawer) btnCloseQueueDrawer.onclick = closeQueueDrawer;
+    if (queueDrawerBackdrop) queueDrawerBackdrop.onclick = closeQueueDrawer;
+    if (btnClearQueue) btnClearQueue.onclick = clearQueue;
+    if (btnOpenDrawerFromBatch) btnOpenDrawerFromBatch.onclick = openQueueDrawer;
+
+    if (queueDropZone) {
+      queueDropZone.ondragover = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        queueDropZone.classList.add('border-amber-400', 'bg-amber-500/20');
+      };
+      queueDropZone.ondragleave = () => {
+        queueDropZone.classList.remove('border-amber-400', 'bg-amber-500/20');
+      };
+      queueDropZone.ondrop = (e) => {
+        e.preventDefault();
+        queueDropZone.classList.remove('border-amber-400', 'bg-amber-500/20');
+        try {
+          const raw = e.dataTransfer.getData('application/json');
+          if (raw) {
+            const trk = JSON.parse(raw);
+            addToQueue(trk);
+          }
+        } catch (err) {
+          console.error("Error al procesar canción arrastrada:", err);
+        }
+      };
+    }
 
     // Disparar descarga automática en el navegador del usuario
     function triggerBrowserDownload(url, filename) {
@@ -464,6 +739,8 @@
       }
     }
     checkAccountStatus();
+    loadQueueFromStorage();
+    updateQueueUI();
 
     // Pestañas
     tabTracksBtn.onclick = () => {
@@ -506,8 +783,8 @@
 
         renderTracks(currentTracks);
         renderAlbums(currentAlbums);
-        selectedTrackIds.clear();
-        updateBatchBar();
+        // La cola persistente se MANTIENE (no se borra entre búsquedas)
+        updateQueueUI();
 
         searchResultsSection.classList.remove('hidden');
         tabTracksBtn.click();
@@ -522,54 +799,70 @@
       }
     };
 
-    // Render de Canciones
+    // Render de Canciones con Arrastre, Selección y Botón Rápido + Cola
     function renderTracks(tracks) {
       if (tracks.length === 0) {
         tracksList.innerHTML = `<div class="col-span-2 text-center py-8 text-xs text-stone-500">No se encontraron canciones.</div>`;
         return;
       }
-      tracksList.innerHTML = tracks.map(t => `
-        <div class="glass-card p-3 rounded-2xl flex items-center justify-between gap-3 group hover:border-amber-400/40 transition-all">
-          <div class="flex items-center gap-3 min-w-0 flex-1">
-            <input type="checkbox" class="track-checkbox w-4 h-4 accent-amber-400 rounded cursor-pointer" data-id="${t.id}" />
-            <img src="${t.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-12 h-12 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-900" />
-            <div class="min-w-0 flex-1">
-              <h4 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h4>
-              <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
-              <div class="flex items-center gap-2 mt-1">
-                <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">FLAC</span>
-                <span class="text-[10px] text-stone-500 font-mono">${t.duration}</span>
+      tracksList.innerHTML = tracks.map(t => {
+        const inQueue = downloadQueue.has(String(t.id));
+        return `
+          <div class="glass-card p-3 rounded-2xl flex items-center justify-between gap-3 group hover:border-amber-400/40 transition-all cursor-grab active:cursor-grabbing ${inQueue ? 'border-amber-400/40 bg-amber-500/5' : ''}"
+            draggable="true"
+            ondragstart="handleTrackDragStart(event, '${t.id}')"
+            ondragend="handleTrackDragEnd(event)">
+            <div class="flex items-center gap-3 min-w-0 flex-1">
+              <input type="checkbox" class="track-checkbox w-4 h-4 accent-amber-400 rounded cursor-pointer shrink-0" data-id="${t.id}" ${inQueue ? 'checked' : ''} />
+              <img src="${t.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-12 h-12 rounded-xl object-cover shrink-0 border border-white/5 bg-stone-900" />
+              <div class="min-w-0 flex-1">
+                <h4 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h4>
+                <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">${t.quality === 'HI_RES_LOSSLESS' ? 'Hi-Res' : 'FLAC'}</span>
+                  <span class="text-[10px] text-stone-500 font-mono">${t.duration}</span>
+                </div>
               </div>
             </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${t.cover || ''}', this)"
+                title="Escuchar muestra (Preescucha)"
+                class="btn-tidal-preview w-8 h-8 rounded-xl bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center shrink-0 transition-all border border-white/10 shadow-sm"
+                data-track-id="${t.id}">
+                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              </button>
+              <button class="btn-toggle-queue px-2.5 py-1.5 rounded-xl ${inQueue ? 'bg-amber-400 text-black shadow-sm' : 'bg-white/10 hover:bg-amber-400/30 text-amber-300 border border-amber-500/20'} font-extrabold text-[10px] font-luxury flex items-center gap-1 transition-all" data-id="${t.id}" title="Añadir o quitar de la cola de descargas">
+                <span>${inQueue ? '✓ En Cola' : '+ Cola'}</span>
+              </button>
+              <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2 py-1.5 rounded-xl bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar solo letra sincronizada (.lrc)">
+                <span>🎤</span>
+              </a>
+              <button class="btn-dl-track px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[11px] font-luxury flex items-center gap-1 transition-all" data-url="${t.url}">
+                <span>Descargar</span>
+              </button>
+            </div>
           </div>
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${t.cover || ''}', this)"
-              title="Escuchar muestra (Preescucha)"
-              class="btn-tidal-preview w-8 h-8 rounded-xl bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center shrink-0 transition-all border border-white/10 shadow-sm"
-              data-track-id="${t.id}">
-              <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            </button>
-            <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar solo letra sincronizada (.lrc)">
-              <span>🎤 .LRC</span>
-            </a>
-            <button class="btn-dl-track px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[11px] font-luxury flex items-center gap-1 transition-all" data-url="${t.url}">
-              <span>Descargar</span>
-            </button>
-          </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
       // Eventos de descarga individual
       document.querySelectorAll('.btn-dl-track').forEach(b => {
         b.onclick = () => startDownload(b.dataset.url);
       });
 
-      // Eventos de selección
+      // Eventos de selección con checkbox
       document.querySelectorAll('.track-checkbox').forEach(cb => {
         cb.onchange = () => {
-          if (cb.checked) selectedTrackIds.add(cb.dataset.id);
-          else selectedTrackIds.delete(cb.dataset.id);
-          updateBatchBar();
+          const track = tracks.find(t => String(t.id) === String(cb.dataset.id));
+          if (track) toggleQueueTrack(track);
+        };
+      });
+
+      // Eventos del botón rápido "+ Cola"
+      document.querySelectorAll('.btn-toggle-queue').forEach(btn => {
+        btn.onclick = () => {
+          const track = tracks.find(t => String(t.id) === String(btn.dataset.id));
+          if (track) toggleQueueTrack(track);
         };
       });
     }
@@ -583,7 +876,7 @@
       albumsGrid.innerHTML = albums.map(a => `
         <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all cursor-pointer" ondblclick="openAlbumModal('${a.id}')" title="Doble clic para desplegar lista de canciones">
           <div class="relative mb-2 overflow-hidden rounded-xl" onclick="openAlbumModal('${a.id}')">
-            <img src="${a.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
+            <img src="${a.cover || 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100'%3E%3Crect width=\'100\' height=\'100\' fill=\'%23111622\'/%3E%3C/svg%3E'}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
             <span class="absolute top-2 right-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-black/80 text-amber-300 font-mono border border-amber-400/30">Álbum</span>
             <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-all p-2 text-center pointer-events-none">
               <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-black text-[10px] font-extrabold font-luxury shadow-lg">
@@ -651,10 +944,15 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Error obteniendo canciones del álbum");
 
+        currentAlbumModalTracks = (data.tracks || []).map(t => ({
+          ...t,
+          cover: t.cover || data.cover
+        }));
+
         currentAlbumModalUrl = data.url || `https://tidal.com/browse/album/${albumId}`;
         albumModalTitle.textContent = data.title;
         albumModalArtist.textContent = data.artist;
-        albumModalTracksCount.textContent = `${data.tracks_count || (data.tracks ? data.tracks.length : 0)} canciones`;
+        albumModalTracksCount.textContent = `${data.tracks_count || currentAlbumModalTracks.length} canciones`;
         albumModalDuration.textContent = data.duration || '--:--';
         if (data.cover) {
           albumModalCover.src = data.cover;
@@ -675,40 +973,61 @@
           startDownload(currentAlbumModalUrl);
         };
 
+        if (btnAlbumModalAddAllQueue) {
+          btnAlbumModalAddAllQueue.onclick = () => {
+            currentAlbumModalTracks.forEach(t => {
+              downloadQueue.set(String(t.id), t);
+            });
+            saveQueueToStorage();
+            updateQueueUI();
+            syncTrackListButtons();
+            openQueueDrawer();
+          };
+        }
+
         albumModalLoading.classList.add('hidden');
 
-        if (!data.tracks || data.tracks.length === 0) {
+        if (!currentAlbumModalTracks || currentAlbumModalTracks.length === 0) {
           albumModalTracksList.innerHTML = `<div class="text-center py-6 text-stone-500 text-xs font-mono">No se encontraron pistas disponibles en este álbum.</div>`;
           return;
         }
 
-        albumModalTracksList.innerHTML = data.tracks.map((t, idx) => `
-          <div class="p-2.5 rounded-xl hover:bg-white/5 border border-white/5 flex items-center justify-between gap-3 group transition-colors">
-            <div class="flex items-center gap-3 min-w-0 flex-1">
-              <span class="w-6 text-center text-xs font-mono font-bold text-stone-500 group-hover:text-amber-400">${t.track_number || (idx + 1)}</span>
-              <div class="min-w-0 flex-1">
-                <h5 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h5>
-                <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
+        albumModalTracksList.innerHTML = currentAlbumModalTracks.map((t, idx) => {
+          const inQueue = downloadQueue.has(String(t.id));
+          return `
+            <div class="p-2.5 rounded-xl hover:bg-white/5 border border-white/5 flex items-center justify-between gap-3 group transition-colors cursor-grab active:cursor-grabbing ${inQueue ? 'bg-amber-500/10 border-amber-400/30' : ''}"
+              draggable="true"
+              ondragstart="handleTrackDragStart(event, '${t.id}')"
+              ondragend="handleTrackDragEnd(event)">
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <span class="w-6 text-center text-xs font-mono font-bold text-stone-500 group-hover:text-amber-400">${t.track_number || (idx + 1)}</span>
+                <div class="min-w-0 flex-1">
+                  <h5 class="text-xs font-bold text-white truncate font-luxury">${t.title}</h5>
+                  <p class="text-[11px] text-stone-400 truncate">${t.artist}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">${t.quality === 'HI_RES_LOSSLESS' ? 'Hi-Res' : 'FLAC'}</span>
+                <span class="text-[10px] text-stone-400 font-mono hidden sm:inline mr-1">${t.duration}</span>
+                <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${t.cover || ''}', this)"
+                  title="Escuchar muestra (Preescucha)"
+                  class="btn-tidal-preview w-7 h-7 rounded-lg bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center shrink-0 transition-all border border-white/10 shadow-sm"
+                  data-track-id="${t.id}">
+                  <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>
+                <button class="btn-toggle-queue px-2.5 py-1 rounded-lg ${inQueue ? 'bg-amber-400 text-black font-extrabold' : 'bg-white/10 hover:bg-amber-400/30 text-amber-300 font-semibold border border-amber-500/20'} text-[10px] font-luxury flex items-center gap-1 transition-all" data-id="${t.id}" title="Añadir a la cola">
+                  <span>${inQueue ? '✓' : '+ Cola'}</span>
+                </button>
+                <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2 py-1 rounded-lg bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar letra sincronizada (.lrc)">
+                  <span>🎤</span>
+                </a>
+                <button class="btn-dl-modal-track px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury flex items-center gap-1 transition-all" data-url="${t.url}">
+                  <span>⬇ FLAC</span>
+                </button>
               </div>
             </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <span class="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 font-mono">${t.quality === 'HI_RES_LOSSLESS' ? 'Hi-Res' : 'FLAC'}</span>
-              <span class="text-[10px] text-stone-400 font-mono hidden sm:inline mr-1">${t.duration}</span>
-              <button onclick="event.stopPropagation(); toggleTidalPreview('${t.id}', '${encodeURIComponent(t.title)}', '${encodeURIComponent(t.artist)}', '${data.cover || ''}', this)"
-                title="Escuchar muestra (Preescucha)"
-                class="btn-tidal-preview w-7 h-7 rounded-lg bg-white/10 hover:bg-amber-400 text-white hover:text-black flex items-center justify-center shrink-0 transition-all border border-white/10 shadow-sm"
-                data-track-id="${t.id}">
-                <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              </button>
-              <a href="/api/tidal/lyrics/download/${t.id}" target="_blank" download class="px-2 py-1 rounded-lg bg-white/5 hover:bg-amber-400/20 text-stone-300 hover:text-amber-300 border border-white/10 font-bold text-[10px] font-mono flex items-center gap-1 transition-all" title="Descargar letra sincronizada (.lrc)">
-                <span>🎤 .LRC</span>
-              </a>
-              <button class="btn-dl-modal-track px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury flex items-center gap-1 transition-all" data-url="${t.url}">
-                <span>⬇ FLAC</span>
-              </button>
-            </div>
-          </div>
-        `).join('');
+          `;
+        }).join('');
 
         albumModalTracksList.querySelectorAll('.btn-dl-modal-track').forEach(b => {
           b.onclick = () => {
@@ -717,29 +1036,56 @@
           };
         });
 
+        albumModalTracksList.querySelectorAll('.btn-toggle-queue').forEach(btn => {
+          btn.onclick = () => {
+            const track = currentAlbumModalTracks.find(t => String(t.id) === String(btn.dataset.id));
+            if (track) toggleQueueTrack(track);
+          };
+        });
+
       } catch (err) {
         albumModalLoading.innerHTML = `<span class="text-rose-400 font-mono text-xs">Error al cargar canciones: ${err.message}</span>`;
       }
     }
 
-    function updateBatchBar() {
-      if (selectedTrackIds.size > 0) {
-        selectedCountText.textContent = `${selectedTrackIds.size} seleccionada(s)`;
-        batchBar.classList.remove('hidden');
-      } else {
-        batchBar.classList.add('hidden');
+    // Botones de Descarga por Lotes
+    if (btnDownloadBatch) btnDownloadBatch.onclick = startBatchDownload;
+    if (btnDownloadBatchZip) btnDownloadBatchZip.onclick = startBatchDownload;
+
+    async function startBatchDownload() {
+      if (downloadQueue.size === 0) {
+        alert("La cola de descargas está vacía. Añade canciones con '+ Cola' o arrastrándolas.");
+        return;
+      }
+
+      const quality = document.querySelector('input[name="tidalQuality"]:checked')?.value || 'master';
+      const trackIds = Array.from(downloadQueue.keys());
+
+      closeQueueDrawer();
+      progressBox.classList.remove('hidden');
+      progressBar.style.width = '0%';
+      progressPercent.textContent = '0%';
+      progressTitle.textContent = `Descargando Colección (${trackIds.length} canciones)...`;
+      progressStatus.textContent = 'Iniciando empaquetado en el servidor...';
+      successBox.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/tidal/download-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ track_ids: trackIds, quality })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error al iniciar lote");
+
+        await pollTask(data.task_id);
+      } catch (err) {
+        progressBox.classList.add('hidden');
+        alert("Error de descarga por lotes: " + err.message);
       }
     }
 
-    btnDownloadBatch.onclick = async () => {
-      const selectedTracks = currentTracks.filter(t => selectedTrackIds.has(t.id));
-      if (selectedTracks.length === 0) return;
-      for (const t of selectedTracks) {
-        await startDownload(t.url);
-      }
-    };
-
-    // Motor de descarga y sondeo de tarea
+    // Motor de descarga y sondeo de tarea individual o de álbum
     async function startDownload(url) {
       const quality = document.querySelector('input[name="tidalQuality"]:checked')?.value || 'master';
       
@@ -789,13 +1135,13 @@
               } else if (task.result) {
                 const res = task.result;
                 
-                if (res.type === 'album') {
-                  successTitle.textContent = "¡Álbum Completado en .ZIP!";
+                if (res.type === 'album' || res.type === 'batch') {
+                  successTitle.textContent = res.type === 'batch' ? "¡Colección Personalizada en .ZIP!" : "¡Álbum Completado en .ZIP!";
                   successFileName.textContent = res.filename;
                   successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • Descargando a tu equipo...`;
                   btnDirectDownload.href = res.download_url;
                   btnDirectDownload.setAttribute('download', res.filename);
-                  btnDirectDownloadText.textContent = "Descargar Álbum ZIP";
+                  btnDirectDownloadText.textContent = res.type === 'batch' ? "Descargar Colección ZIP" : "Descargar Álbum ZIP";
                   badgeLyricsIncluded.classList.remove('hidden');
                   badgeLyricsIncluded.textContent = "📦 Todas las canciones y letras sincronizadas (.LRC) incluidas en el ZIP";
                   btnDownloadLrc.classList.add('hidden');

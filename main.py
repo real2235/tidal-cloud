@@ -162,6 +162,10 @@ class TidalDownloadRequest(BaseModel):
     url: str
     quality: Optional[str] = "master"  # 'master' (24-bit) o 'hifi' (16-bit)
 
+class TidalBatchDownloadRequest(BaseModel):
+    track_ids: List[str]
+    quality: Optional[str] = "master"
+
 class TidalInfoRequest(BaseModel):
     url: str
 
@@ -811,6 +815,85 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
         tasks[task_id]["completed"] = True
 
 
+def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, quality_mode: str):
+    task_dir = TEMP_DIR / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    batch_folder_name = f"Tidal_Coleccion_{len(track_ids)}_canciones"
+    batch_dir = task_dir / batch_folder_name
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        total_tracks = len(track_ids)
+        tasks[task_id]["title"] = f"Colección de {total_tracks} canciones"
+        tasks[task_id]["artist"] = "Varios Artistas"
+        tasks[task_id]["total_tracks"] = total_tracks
+
+        for idx, trk_id in enumerate(track_ids):
+            try:
+                track = api.getTrack(trk_id)
+                t_title = track.title
+                t_artist = track.artist.name if track.artist else "Artista"
+                tasks[task_id]["status"] = f"Descargando ({idx+1}/{total_tracks}): {t_artist} - {t_title}"
+
+                base_pct = (idx / total_tracks) * 90.0
+
+                def on_track_prog(frac: float, msg: str):
+                    cur_pct = base_pct + (frac * (90.0 / total_tracks))
+                    tasks[task_id]["percent"] = round(cur_pct, 1)
+
+                cover_data = b""
+                if track.album and track.album.cover:
+                    try:
+                        c_uid = track.album.cover.replace("-", "/")
+                        c_url = f"https://resources.tidal.com/images/{c_uid}/1280x1280.jpg"
+                        res_cov = requests.get(c_url, timeout=10)
+                        if res_cov.status_code == 200:
+                            cover_data = res_cov.content
+                    except Exception:
+                        pass
+
+                download_single_flac_track(
+                    api=api,
+                    track=track,
+                    target_dir=batch_dir,
+                    quality_mode=quality_mode,
+                    cover_data=cover_data,
+                    on_subprogress=on_track_prog,
+                )
+            except Exception as e:
+                logger.error(f"[TIDAL BATCH] Error en pista ID {trk_id}: {e}")
+
+        # Empaquetar todo en un archivo .ZIP (incluye FLACs y letras sincronizadas .LRC)
+        tasks[task_id]["status"] = "Empaquetando colección y letras en archivo .ZIP..."
+        tasks[task_id]["percent"] = 95.0
+
+        zip_filename = f"{batch_folder_name}.zip"
+        zip_path = task_dir / zip_filename
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for file_path in batch_dir.rglob("*"):
+                if file_path.is_file():
+                    arcname = file_path.relative_to(batch_dir)
+                    zip_file.write(file_path, arcname)
+
+        total_size = format_size(zip_path.stat().st_size)
+
+        tasks[task_id]["completed"] = True
+        tasks[task_id]["percent"] = 100.0
+        tasks[task_id]["status"] = "¡Colección completada con FLAC y letras en .ZIP!"
+        tasks[task_id]["result"] = {
+            "type": "batch",
+            "filename": zip_filename,
+            "tracks_downloaded": total_tracks,
+            "total_size": total_size,
+            "download_url": f"/api/download/{task_id}/{urllib.parse.quote(zip_filename)}",
+        }
+    except Exception as e:
+        logger.error(f"[TIDAL BATCH] Error en colección {task_id}: {e}")
+        tasks[task_id]["error"] = str(e)
+        tasks[task_id]["status"] = f"Error: {str(e)}"
+        tasks[task_id]["completed"] = True
+
+
 @app.get("/api/tidal/lyrics/download/{track_id}")
 async def download_track_lyrics_direct(track_id: str):
     """Descarga directa del archivo de letra sincronizada (.lrc) para cualquier canción"""
@@ -941,6 +1024,37 @@ async def download_tidal(req: TidalDownloadRequest):
         ).start()
 
     return {"task_id": task_id, "status": "Iniciando descarga..."}
+
+
+@app.post("/api/tidal/download-batch")
+async def download_tidal_batch(req: TidalBatchDownloadRequest):
+    """Inicia la descarga por lotes de una lista de canciones en un paquete ZIP con letras .LRC"""
+    if not req.track_ids:
+        raise HTTPException(status_code=400, detail="No se proporcionaron canciones para descargar.")
+
+    quality_mode = "HI_RES_LOSSLESS" if req.quality == "master" else "LOSSLESS"
+    api = get_active_tidal_api()
+
+    clean_old_temp_dirs()
+    task_id = uuid.uuid4().hex
+    tasks[task_id] = {
+        "id": task_id,
+        "type": "tidal_batch",
+        "status": "Iniciando colección personalizada...",
+        "percent": 0.0,
+        "completed": False,
+        "error": None,
+        "result": None,
+        "created_at": time.time(),
+    }
+
+    threading.Thread(
+        target=run_tidal_batch_task,
+        args=(task_id, req.track_ids, api, quality_mode),
+        daemon=True,
+    ).start()
+
+    return {"task_id": task_id, "status": "Iniciando descarga de colección..."}
 
 
 @app.get("/api/task-status/{task_id}")
