@@ -888,6 +888,13 @@
       const query = searchInput.value.trim();
       if (!query) return;
 
+      // Si es un enlace directo de álbum o canción de Tidal, descargar directamente
+      const isDirectLink = Boolean(query.includes('tidal.com') || query.includes('/album/') || query.includes('/track/'));
+      if (isDirectLink) {
+        startDownload(query);
+        return;
+      }
+
       btnSearch.disabled = true;
       btnSearch.innerHTML = `<span class="animate-spin text-xs">⌛</span> Buscando...`;
       successBox.classList.add('hidden');
@@ -994,35 +1001,123 @@
     }
 
     // Render de Álbumes con visualizador de canciones (doble clic o clic en portada)
+        const cloudAlbumQueueSet = new Set();
+
+    async function toggleCloudAlbumQueue(albumId, triggerElem) {
+      const album = (currentAlbums || []).find(a => String(a.id) === String(albumId));
+      const isAlreadyIn = cloudAlbumQueueSet.has(String(albumId));
+
+      if (isAlreadyIn) {
+        cloudAlbumQueueSet.delete(String(albumId));
+        for (const [tid, trk] of Array.from(downloadQueue.entries())) {
+          if (String(trk.album_id) === String(albumId) || (album && trk.album === album.title)) {
+            downloadQueue.delete(tid);
+          }
+        }
+        saveQueueToStorage();
+        updateQueueUI();
+        syncTrackListButtons();
+        syncCloudAlbumButtons();
+        showQueueToast(`Álbum "${album ? album.title : albumId}" quitado de la cola`);
+        return;
+      }
+
+      if (triggerElem) triggerElem.disabled = true;
+      showQueueToast(`Cargando canciones de "${album ? album.title : 'álbum'}"...`);
+
+      try {
+        const res = await fetch(`/api/tidal/album/${albumId}/tracks`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Error obteniendo canciones");
+        const tracks = data.tracks || [];
+        if (tracks.length === 0) throw new Error("El álbum no contiene canciones");
+
+        tracks.forEach(t => {
+          downloadQueue.set(String(t.id), {
+            id: t.id,
+            title: t.title,
+            artist: t.artist || (album ? album.artist : 'Artista'),
+            album: album ? album.title : data.title,
+            album_id: String(albumId),
+            duration: t.duration,
+            quality: t.quality,
+            cover: t.cover || (album ? album.cover : '') || data.cover
+          });
+        });
+
+        cloudAlbumQueueSet.add(String(albumId));
+        saveQueueToStorage();
+        updateQueueUI();
+        syncTrackListButtons();
+        syncCloudAlbumButtons();
+        showQueueToast(`Álbum "${album ? album.title : data.title}" añadido (+${tracks.length} canciones)`);
+      } catch (err) {
+        alert("No se pudo añadir el álbum: " + err.message);
+      } finally {
+        if (triggerElem) triggerElem.disabled = false;
+      }
+    }
+
+    function syncCloudAlbumButtons() {
+      document.querySelectorAll('.album-checkbox').forEach(chk => {
+        const aid = chk.dataset.albumId;
+        const inQueue = cloudAlbumQueueSet.has(String(aid));
+        chk.checked = inQueue;
+      });
+      document.querySelectorAll('.btn-toggle-album-queue').forEach(btn => {
+        const aid = btn.dataset.albumId;
+        const inQueue = cloudAlbumQueueSet.has(String(aid));
+        btn.innerHTML = `<span>${inQueue ? '✓ En Cola' : '+ Cola'}</span>`;
+        if (inQueue) {
+          btn.className = "btn-toggle-album-queue px-2.5 py-1 rounded-lg bg-amber-400 text-black font-extrabold shadow-sm text-[10px] flex items-center gap-1 transition-all";
+        } else {
+          btn.className = "btn-toggle-album-queue px-2.5 py-1 rounded-lg bg-white/10 hover:bg-amber-400/30 text-amber-300 font-extrabold border border-amber-500/20 text-[10px] flex items-center gap-1 transition-all";
+        }
+      });
+    }
+
     function renderAlbums(albums) {
       if (albums.length === 0) {
         albumsGrid.innerHTML = `<div class="col-span-4 text-center py-8 text-xs text-stone-500">No se encontraron álbumes.</div>`;
         return;
       }
-      albumsGrid.innerHTML = albums.map(a => `
-        <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all cursor-pointer" ondblclick="openAlbumModal('${a.id}')" title="Doble clic para desplegar lista de canciones">
-          <div class="relative mb-2 overflow-hidden rounded-xl" onclick="openAlbumModal('${a.id}')">
-            <img src="${a.cover || DEFAULT_COVER}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
-            <span class="absolute top-2 right-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-black/80 text-amber-300 font-mono border border-amber-400/30">Álbum</span>
-            <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-all p-2 text-center pointer-events-none">
-              <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-black text-[10px] font-extrabold font-luxury shadow-lg">
-                👁️ Ver Canciones
-              </span>
-              <span class="text-[9px] text-stone-300 mt-1 font-mono">Doble clic o clic</span>
+      albumsGrid.innerHTML = albums.map(a => {
+        const inQueue = cloudAlbumQueueSet.has(String(a.id));
+        return `
+        <div class="glass-card p-3 rounded-2xl flex flex-col justify-between group hover:border-amber-400/40 transition-all cursor-pointer ${inQueue ? 'border-amber-400/60 bg-amber-500/10 ring-1 ring-amber-400/50' : ''}" ondblclick="openAlbumModal('${a.id}')" title="Doble clic para desplegar lista de canciones">
+          <div class="relative mb-2 overflow-hidden rounded-xl">
+            <input type="checkbox" class="album-checkbox absolute top-2 left-2 z-10 w-4 h-4 accent-amber-400 rounded cursor-pointer shadow" data-album-id="${a.id}" ${inQueue ? 'checked' : ''} onclick="event.stopPropagation(); toggleCloudAlbumQueue('${a.id}', this)" title="Seleccionar álbum para la cola" />
+            <div onclick="openAlbumModal('${a.id}')">
+              <img src="${a.cover || DEFAULT_COVER}" class="w-full aspect-square object-cover rounded-xl border border-white/5 bg-stone-900 transition-transform duration-300 group-hover:scale-105" />
+              <span class="absolute top-2 right-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-black/80 text-amber-300 font-mono border border-amber-400/30">Álbum</span>
+              <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-all p-2 text-center pointer-events-none">
+                <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-black text-[10px] font-extrabold shadow-lg">
+                  👁️ Ver Canciones
+                </span>
+                <span class="text-[9px] text-stone-300 mt-1 font-mono">Doble clic o clic</span>
+              </div>
             </div>
           </div>
-          <h4 class="text-xs font-bold text-white truncate font-luxury mb-0.5" onclick="openAlbumModal('${a.id}')">${a.title}</h4>
+          <h4 class="text-xs font-bold text-white truncate mb-0.5 hover:text-amber-300 transition-colors" onclick="openAlbumModal('${a.id}')">${a.title}</h4>
           <p class="text-[11px] text-stone-400 truncate mb-2">${a.artist}</p>
-          <div class="flex items-center justify-between pt-2 border-t border-white/5" onclick="event.stopPropagation()">
+          <div class="flex items-center justify-between pt-2 border-t border-white/5 gap-1.5" onclick="event.stopPropagation()">
             <button onclick="openAlbumModal('${a.id}')" class="text-[10px] text-amber-400/90 hover:text-amber-300 font-mono flex items-center gap-1 transition-colors">
-              <span>📋 ${a.tracks_count || '?'} canciones</span>
+              <span>📋 ${a.tracks_count || '?'}</span>
             </button>
-            <button class="btn-dl-album px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] font-luxury transition-all" data-url="${a.url}" title="Descargar álbum completo en ZIP">
-              <span>ZIP FLAC</span>
-            </button>
+            <div class="flex items-center gap-1.5">
+              <button onclick="toggleCloudAlbumQueue('${a.id}', this)" data-album-id="${a.id}"
+                class="btn-toggle-album-queue px-2 py-1 rounded-lg ${inQueue ? 'bg-amber-400 text-black font-extrabold shadow-sm' : 'bg-white/10 hover:bg-amber-400/30 text-amber-300 font-extrabold border border-amber-500/20'} text-[10px] flex items-center gap-1 transition-all"
+                title="Añadir todas las canciones de este álbum a la cola">
+                <span>${inQueue ? '✓ En Cola' : '+ Cola'}</span>
+              </button>
+              <button class="btn-dl-album px-2 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400 text-amber-300 hover:text-black font-extrabold text-[10px] transition-all" data-url="${a.url}" title="Descargar álbum completo en ZIP">
+                <span>ZIP</span>
+              </button>
+            </div>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
 
       document.querySelectorAll('.btn-dl-album').forEach(b => {
         b.onclick = (e) => {
@@ -1030,29 +1125,6 @@
           startDownload(b.dataset.url);
         };
       });
-    }
-
-    // Modal de Canciones del Álbum (Despliegue interactivo)
-    const albumModal = document.getElementById('albumModal');
-    const albumModalCover = document.getElementById('albumModalCover');
-    const albumModalTitle = document.getElementById('albumModalTitle');
-    const albumModalArtist = document.getElementById('albumModalArtist');
-    const albumModalTracksCount = document.getElementById('albumModalTracksCount');
-    const albumModalDuration = document.getElementById('albumModalDuration');
-    const albumModalYear = document.getElementById('albumModalYear');
-    const albumModalLoading = document.getElementById('albumModalLoading');
-    const albumModalTracksList = document.getElementById('albumModalTracksList');
-    const btnAlbumModalDownloadAll = document.getElementById('btnAlbumModalDownloadAll');
-    const btnCloseAlbumModal = document.getElementById('btnCloseAlbumModal');
-    let currentAlbumModalUrl = null;
-
-    if (btnCloseAlbumModal) {
-      btnCloseAlbumModal.onclick = () => albumModal.classList.add('hidden');
-    }
-    if (albumModal) {
-      albumModal.onclick = (e) => {
-        if (e.target === albumModal) albumModal.classList.add('hidden');
-      };
     }
 
     async function openAlbumModal(albumId) {
