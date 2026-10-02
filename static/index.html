@@ -297,14 +297,14 @@
   </main>
 
   <!-- Modal de Autenticación Tidal -->
-  <div id="authModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="glass-card max-w-md w-full rounded-3xl p-6 border border-amber-500/30">
+  <div id="authModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer">
+    <div class="glass-card max-w-md w-full rounded-3xl p-6 border border-amber-500/30 cursor-default" onclick="event.stopPropagation()">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-sm font-bold text-white font-luxury uppercase tracking-wider flex items-center gap-2">
           <span>👑</span> Vincular Cuenta Tidal
         </h3>
-        <button id="btnCloseAuthModal" class="text-stone-400 hover:text-white p-1">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        <button id="btnCloseAuthModal" type="button" class="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-all cursor-pointer" title="Cerrar ventana (Esc)">
+          <svg class="w-5 h-5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
 
@@ -335,8 +335,8 @@
   </div>
 
   <!-- Modal de Canciones del Álbum -->
-  <div id="albumModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
-    <div class="glass-card max-w-2xl w-full max-h-[90vh] flex flex-col rounded-3xl border border-amber-500/30 overflow-hidden shadow-2xl">
+  <div id="albumModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 cursor-pointer">
+    <div class="glass-card max-w-2xl w-full max-h-[90vh] flex flex-col rounded-3xl border border-amber-500/30 overflow-hidden shadow-2xl cursor-default" onclick="event.stopPropagation()">
       <!-- Header del Modal -->
       <div class="p-5 sm:p-6 border-b border-white/10 flex items-start justify-between gap-4 shrink-0 bg-stone-950/70">
         <div class="flex items-center gap-4 min-w-0">
@@ -364,8 +364,8 @@
             <span class="hidden sm:inline">Descargar ZIP</span>
             <span class="sm:hidden">ZIP</span>
           </button>
-          <button id="btnCloseAlbumModal" class="text-stone-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-all">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          <button id="btnCloseAlbumModal" type="button" onclick="closeAlbumModal()" class="text-stone-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-all cursor-pointer" title="Cerrar ventana (Esc)">
+            <svg class="w-5 h-5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
       </div>
@@ -543,6 +543,8 @@
     const btnDownloadBatchZip = document.getElementById('btnDownloadBatchZip');
     const btnOpenDrawerFromBatch = document.getElementById('btnOpenDrawerFromBatch');
     const btnAlbumModalAddAllQueue = document.getElementById('btnAlbumModalAddAllQueue');
+    const albumModal = document.getElementById('albumModal');
+    const btnCloseAlbumModal = document.getElementById('btnCloseAlbumModal');
 
     // ==========================================
     // PERSISTENCIA DE LA COLA (LOCALSTORAGE)
@@ -1438,12 +1440,48 @@
       });
     }
 
+    // Modal de Álbum
+    window.closeAlbumModal = function() {
+      if (albumModal) albumModal.classList.add('hidden');
+    };
+
+    if (btnCloseAlbumModal) {
+      btnCloseAlbumModal.onclick = closeAlbumModal;
+    }
+
+    if (albumModal) {
+      albumModal.addEventListener('click', (e) => {
+        if (e.target === albumModal) closeAlbumModal();
+      });
+    }
+
     // Modal de Autenticación
     btnOpenAuthModal.onclick = () => authModal.classList.remove('hidden');
     btnCloseAuthModal.onclick = () => {
       authModal.classList.add('hidden');
       if (authPollTimer) clearInterval(authPollTimer);
     };
+    if (authModal) {
+      authModal.addEventListener('click', (e) => {
+        if (e.target === authModal) {
+          authModal.classList.add('hidden');
+          if (authPollTimer) clearInterval(authPollTimer);
+        }
+      });
+    }
+
+    // Cerrar cualquier modal o panel activo con la tecla Escape (ESC)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        if (albumModal && !albumModal.classList.contains('hidden')) {
+          closeAlbumModal();
+        } else if (authModal && !authModal.classList.contains('hidden')) {
+          btnCloseAuthModal?.click();
+        } else if (queueDrawer && !queueDrawer.classList.contains('translate-x-full')) {
+          closeQueueDrawer();
+        }
+      }
+    });
 
     btnStartAuth.onclick = async () => {
       btnStartAuth.disabled = true;
