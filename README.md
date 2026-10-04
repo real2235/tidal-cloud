@@ -1,35 +1,47 @@
+---
+title: Tidal FLAC Master Studio
+emoji: 🎵
+colorFrom: yellow
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Tidal FLAC Master • Cloud Studio
 
-Servidor de descarga de música en calidad audiófila **FLAC 24-bit (Hi-Res)** y **16-bit (Lossless)** optimizado para desplegar gratuitamente en **Render.com**.
+Servidor de descarga de música en calidad audiófila **FLAC 24-bit (Hi-Res)** y **16-bit (Lossless)** optimizado para desplegar gratuitamente en **Hugging Face Spaces (16 GB RAM / 50 GB Disco)** o **Render.com**.
 
 ---
 
-## 🚀 Despliegue en Render.com (100% Gratis)
+## 🚀 Opción Recomendada: Despliegue en Hugging Face Spaces (Gratis, Sin Límite de 5 GB)
 
-### Paso 1: Subir a GitHub
-1. Crea un repositorio nuevo en tu cuenta de GitHub (puede ser público o privado), por ejemplo llamado `tidal-cloud`.
-2. Sube esta carpeta a tu repositorio:
-   ```bash
-   git remote add origin https://github.com/TU_USUARIO/tidal-cloud.git
-   git branch -M main
-   git push -u origin main
-   ```
+1. Crea una cuenta gratuita en [huggingface.co](https://huggingface.co/).
+2. Haz clic en tu perfil (arriba a la derecha) → **"New Space"**.
+3. Configura tu Space:
+   * **Space name:** `tidal-flac-studio` (o el nombre que prefieras).
+   * **Select the Space SDK:** Selecciona **Docker** → **Blank**.
+   * **Space Hardware:** `CPU basic · 2 vCPU · 16 GB · FREE`.
+   * **Visibility:** **Public** (o Private).
+4. Sube los archivos de esta carpeta `tidal-cloud` directamente desde la pestaña **"Files"** → **"Add file"** → **"Upload files"** (o por Git) incluyendo:
+   * `Dockerfile`
+   * `README.md`
+   * `main.py`
+   * `requirements.txt`
+   * `tiddl.json`
+   * Carpeta `static/` (`index.html`)
+5. ¡Listo! Hugging Face construirá el contenedor Docker en ~2 minutos y tendrás una URL directa (`https://TU_USUARIO-tidal-flac-studio.hf.space`) sin el límite de 5 GB de Render.
 
-### Paso 2: Crear el Web Service en Render
-1. Entra a [render.com](https://render.com/) e inicia sesión con tu cuenta de GitHub.
-2. Haz clic en **"New +"** y selecciona **"Web Service"**.
-3. Selecciona tu repositorio `tidal-cloud`.
-4. En **Language / Environment**, selecciona **Docker** (Render detectará el `Dockerfile` automáticamente con FFmpeg y Python).
-5. En **Plan**, selecciona **Free ($0/month)**.
+---
 
-### Paso 3: Vincular tu cuenta de Tidal en la Nube
-Tienes dos formas sencillas:
-* **Opción A (Automática):** En la configuración de tu servicio en Render, ve a la sección **"Environment Variables"** y añade:
-  * Key: `TIDAL_CONFIG_JSON`
-  * Value: (Pega el contenido de tu archivo local `tiddl.json`)
-* **Opción B (Desde la web):** Cuando la página esté online, entra al enlace de Render, haz clic en **"Cuenta Tidal"** y aprueba con el código de verificación en tu celular o PC.
+## 🌐 Alternativa: Despliegue en Render.com
+
+1. Sube esta carpeta a un repositorio de GitHub.
+2. En [render.com](https://render.com/), haz clic en **"New +"** → **"Web Service"** y conecta el repositorio.
+3. Selecciona **Docker** y el plan **Free**. Render inyectará su variable `$PORT` automáticamente.
 
 ---
 
 ## 💻 Prueba Local en tu PC
 Simplemente haz doble clic en `iniciar_local.bat` y abre `http://localhost:8000` en tu navegador.
+

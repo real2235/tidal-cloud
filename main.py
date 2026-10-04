@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import json
@@ -8,6 +9,7 @@ import zipfile
 import logging
 import asyncio
 import threading
+import subprocess
 import urllib.parse
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, List, Tuple
@@ -17,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from mutagen.flac import FLAC, Picture
 import requests
 import uvicorn
 
@@ -209,15 +212,18 @@ def format_size(bytes_size: int) -> str:
     return f"{bytes_size:.1f} TB"
 
 def clean_old_temp_dirs():
-    """Elimina carpetas temporales de descargas mayores a 30 minutos"""
+    """Elimina carpetas temporales de descargas mayores a 8 minutos y limpia tareas antiguas en memoria"""
     now = time.time()
     for item in TEMP_DIR.iterdir():
         if item.is_dir():
             try:
-                if now - item.stat().st_mtime > 1800:
+                if now - item.stat().st_mtime > 480:
                     shutil.rmtree(item, ignore_errors=True)
             except Exception:
                 pass
+    expired_ids = [tid for tid, tinfo in list(tasks.items()) if now - tinfo.get("created_at", now) > 900]
+    for tid in expired_ids:
+        tasks.pop(tid, None)
 
 
 # ==========================================
@@ -611,6 +617,62 @@ def safe_get_lyrics(api: TidalApi, track_id: Union[str, int], track = None) -> O
 
     return None
 
+def resolve_track_cover_bytes(api: TidalApi, track, initial_cover: bytes = b"") -> bytes:
+    """Obtiene los bytes JPEG de la carátula del álbum en alta resolución con múltiples capas de respaldo."""
+    if initial_cover and len(initial_cover) > 256:
+        return initial_cover
+
+    cover_uid = None
+    if getattr(track, "album", None) and getattr(track.album, "cover", None):
+        cover_uid = track.album.cover
+    elif getattr(track, "album", None) and getattr(track.album, "id", None):
+        try:
+            alb = api.getAlbum(track.album.id)
+            if alb and getattr(alb, "cover", None):
+                cover_uid = alb.cover
+        except Exception:
+            pass
+
+    if cover_uid:
+        for sz in (1280, 640):
+            try:
+                c_obj = Cover(cover_uid, size=sz)
+                if c_obj.content and len(c_obj.content) > 256:
+                    return c_obj.content
+            except Exception:
+                pass
+            try:
+                uid_path = str(cover_uid).replace("-", "/")
+                url = f"https://resources.tidal.com/images/{uid_path}/{sz}x{sz}.jpg"
+                r = requests.get(url, timeout=10)
+                if r.status_code == 200 and len(r.content) > 256:
+                    return r.content
+            except Exception:
+                pass
+
+    # Respaldo final: buscar carátula HD en iTunes Search API
+    try:
+        t_title = getattr(track, "title", "") or ""
+        t_artist = track.artist.name if getattr(track, "artist", None) else ""
+        q = f"{t_artist} {t_title}".strip()
+        if q:
+            it_url = f"https://itunes.apple.com/search?term={urllib.parse.quote(q)}&entity=song&limit=1"
+            r = requests.get(it_url, timeout=6)
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                if results:
+                    art_url = results[0].get("artworkUrl100", "")
+                    if art_url:
+                        hd_url = art_url.replace("100x100bb", "1000x1000bb")
+                        img_r = requests.get(hd_url, timeout=8)
+                        if img_r.status_code == 200 and len(img_r.content) > 256:
+                            return img_r.content
+    except Exception:
+        pass
+
+    return b""
+
+
 def download_single_flac_track(
     api: TidalApi,
     track,
@@ -688,7 +750,6 @@ def download_single_flac_track(
     if naming_format == "title_only":
         base_name = f"{track_title}"
     else:
-        # Formato: "NOMBRE DEL ARTISTA + NOMBRE DEL ALBUM + NUMERACION + NOMBRE DE LA CANCION"
         base_name = f"{artist_name} - {album_name} - {track_num} - {track_title}"
 
     raw_file = target_dir / f"{base_name}_temp{file_ext}"
@@ -696,22 +757,29 @@ def download_single_flac_track(
 
     with open(raw_file, "wb") as f:
         f.write(stream_bytes)
+    # Liberar buffer en RAM inmediatamente
+    del stream_bytes
 
     if on_subprogress:
         on_subprogress(0.85, "Remuxando con FFmpeg a FLAC...")
 
-    import subprocess
     cmd = ["ffmpeg", "-y", "-i", str(raw_file), str(final_flac_file)]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if res.returncode == 0 and final_flac_file.exists():
         raw_file.unlink(missing_ok=True)
     else:
+        raw_file.unlink(missing_ok=True)
         raise Exception("Fallo en la remuxación a FLAC")
 
-    # Letras sincronizadas (.lrc) oficiales o fallback global
+    # Letras sincronizadas (.lrc) oficiales o fallback global (Tidal -> LRCLIB -> NetEase)
     lyrics_text = ""
     lrc_file_path: Optional[Path] = None
     lyr_info = safe_get_lyrics(api, track.id, track=track)
+    if not lyr_info or not lyr_info.get("has_lyrics"):
+        ne_lrc = fetch_netease_lyrics(artist_name, track.title)
+        if ne_lrc:
+            lyr_info = {"has_lyrics": True, "is_synced": True, "text": ne_lrc}
+
     if lyr_info and lyr_info.get("has_lyrics"):
         lyrics_text = lyr_info.get("text", "")
         lrc_file_path = target_dir / f"{base_name}.lrc"
@@ -723,12 +791,18 @@ def download_single_flac_track(
             logger.warning(f"Error escribiendo archivo .lrc: {e}")
             lrc_file_path = None
 
-    # Metadatos ID3 / Vorbis
+    # Garantizar siempre carátula HD (incluso desde la Cola de Descargas)
+    cover_data = resolve_track_cover_bytes(api, track, cover_data)
+
+    # Metadatos ID3 / Vorbis + Carátula garantizada
     if on_subprogress:
         on_subprogress(0.95, "Incrustando metadatos, letras y carátula...")
 
+    artist_str = track.artist.name if getattr(track, "artist", None) else ""
+    if not artist_str and getattr(track, "artists", None):
+        artist_str = track.artists[0].name
+
     try:
-        artist_str = track.artist.name if track.artist else ""
         addMetadata(
             track_path=final_flac_file,
             track=track,
@@ -736,29 +810,47 @@ def download_single_flac_track(
             album_artist=artist_str,
             lyrics=lyrics_text,
         )
-
-        # Mejorar tags Vorbis: Letras (SYNCEDLYRICS / UNSYNCEDLYRICS) y Género
-        try:
-            from mutagen.flac import FLAC
-            audio = FLAC(str(final_flac_file))
-            if lyrics_text:
-                audio["UNSYNCEDLYRICS"] = [lyrics_text]
-                audio["SYNCEDLYRICS"] = [lyrics_text]
-            # Género vía iTunes Search API
-            query = f"{track.title} {artist_str}"
-            itunes_url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=song&limit=1"
-            res_gen = requests.get(itunes_url, timeout=3.5)
-            if res_gen.status_code == 200:
-                data_gen = res_gen.json()
-                if data_gen.get("resultCount", 0) > 0:
-                    genre = data_gen["results"][0].get("primaryGenreName")
-                    if genre:
-                        audio["GENRE"] = [genre]
-            audio.save()
-        except Exception as ex_m:
-            logger.debug(f"[METADATA EXT] Advertencia: {ex_m}")
     except Exception as e:
-        logger.warning(f"[TIDAL] Aviso metadatos: {e}")
+        logger.warning(f"[TIDAL] Aviso addMetadata primario: {e}")
+
+    try:
+        audio = FLAC(str(final_flac_file))
+        if not audio.get("TITLE") and getattr(track, "title", None):
+            audio["TITLE"] = [track.title]
+        if not audio.get("ARTIST") and artist_str:
+            audio["ARTIST"] = [artist_str]
+        if not audio.get("ALBUM") and album_name:
+            audio["ALBUM"] = [album_name]
+        if not audio.get("ALBUMARTIST") and artist_str:
+            audio["ALBUMARTIST"] = [artist_str]
+        if not audio.get("TRACKNUMBER") and t_num is not None:
+            audio["TRACKNUMBER"] = [str(t_num)]
+
+        if cover_data and len(audio.pictures) == 0:
+            pic = Picture()
+            pic.type = 3  # Front Cover
+            pic.mime = "image/jpeg"
+            pic.desc = "Front Cover"
+            pic.data = cover_data
+            audio.add_picture(pic)
+            logger.info(f"[METADATA] Carátula incrustada directamente en {final_flac_file.name}")
+
+        if lyrics_text:
+            audio["UNSYNCEDLYRICS"] = [lyrics_text]
+            audio["SYNCEDLYRICS"] = [lyrics_text]
+
+        query = f"{track.title} {artist_str}"
+        itunes_url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=song&limit=1"
+        res_gen = requests.get(itunes_url, timeout=3.5)
+        if res_gen.status_code == 200:
+            data_gen = res_gen.json()
+            if data_gen.get("resultCount", 0) > 0:
+                genre = data_gen["results"][0].get("primaryGenreName")
+                if genre:
+                    audio["GENRE"] = [genre]
+        audio.save()
+    except Exception as ex_m:
+        logger.debug(f"[METADATA EXT] Advertencia: {ex_m}")
 
     if on_subprogress:
         on_subprogress(1.0, "Pista lista")
@@ -774,16 +866,7 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
         tasks[task_id]["title"] = track.title
         tasks[task_id]["artist"] = track.artist.name if track.artist else "Artista"
 
-        cover_data = b""
-        if track.album and track.album.cover:
-            try:
-                c_uid = track.album.cover.replace("-", "/")
-                c_url = f"https://resources.tidal.com/images/{c_uid}/1280x1280.jpg"
-                res_cov = requests.get(c_url, timeout=15)
-                if res_cov.status_code == 200:
-                    cover_data = res_cov.content
-            except Exception:
-                pass
+        cover_data = resolve_track_cover_bytes(api, track)
 
         def on_subprogress(pct: float, msg: str):
             tasks[task_id]["percent"] = round(pct * 100, 1)
@@ -807,19 +890,11 @@ def run_tidal_track_task(task_id: str, track_id: str, api: TidalApi, quality_mod
         has_lrc = bool(lrc_file and lrc_file.exists())
         lrc_filename = lrc_file.name if has_lrc else None
 
-        # Empaquetar opcionalmente un Pack ZIP con el FLAC y el archivo .LRC juntos
-        zip_pack_name = None
-        zip_pack_url = None
-        if has_lrc:
-            try:
-                zip_pack_name = f"{final_flac_file.stem} (FLAC + Letra).zip"
-                zip_pack_path = task_dir / zip_pack_name
-                with zipfile.ZipFile(zip_pack_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                    zf.write(final_flac_file, final_flac_file.name)
-                    zf.write(lrc_file, lrc_file.name)
-                zip_pack_url = f"/api/download/{task_id}/{urllib.parse.quote(zip_pack_name)}"
-            except Exception as ex:
-                logger.warning(f"Error empaquetando pack flac+lrc: {ex}")
+        # NOTA DE OPTIMIZACIÓN DE DISCO:
+        # No pre-creamos el archivo .ZIP duplicado en disco; si el usuario solicita el Pack ZIP,
+        # se ensambla al vuelo con ZIP_STORED en /api/download/{task_id}/{pack_filename} ahorrando 50% de almacenamiento.
+        zip_pack_name = f"{final_flac_file.stem} (FLAC + Letra).zip" if has_lrc else None
+        zip_pack_url = f"/api/download/{task_id}/{urllib.parse.quote(zip_pack_name)}" if has_lrc else None
 
         tasks[task_id]["completed"] = True
         tasks[task_id]["percent"] = 100.0
@@ -851,8 +926,8 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
     task_dir.mkdir(parents=True, exist_ok=True)
     try:
         album = api.getAlbum(album_id)
-        album_items = api.getAlbumItems(album_id)
-        tracks = [item.item for item in album_items.items if hasattr(item, "item")]
+        album_items = api.getAlbumItems(album_id, limit=100)
+        tracks = [item.item for item in (album_items.items or []) if hasattr(item, "item") and item.item]
         total_tracks = len(tracks)
 
         album_artist = clean_filename(album.artist.name if album.artist else "Varios Artistas")
@@ -864,6 +939,9 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
         tasks[task_id]["title"] = album.title
         tasks[task_id]["artist"] = album.artist.name if album.artist else "Varios Artistas"
 
+        zip_filename = f"{album_folder_name}.zip"
+        zip_path = task_dir / zip_filename
+
         cover_data = b""
         if album.cover:
             try:
@@ -872,21 +950,21 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
                 res_cov = requests.get(c_url, timeout=15)
                 if res_cov.status_code == 200:
                     cover_data = res_cov.content
-                    with open(album_dir / "cover.jpg", "wb") as f_cov:
-                        f_cov.write(cover_data)
+                    with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_STORED) as zf:
+                        zf.writestr("cover.jpg", cover_data)
             except Exception:
                 pass
 
         for idx, track in enumerate(tracks):
             tasks[task_id]["status"] = f"Descargando ({idx+1}/{total_tracks}): {track.title}"
-            base_pct = (idx / total_tracks) * 90.0
+            base_pct = (idx / total_tracks) * 95.0
 
             def on_track_prog(frac: float, msg: str):
-                cur_pct = base_pct + (frac * (90.0 / total_tracks))
+                cur_pct = base_pct + (frac * (95.0 / total_tracks))
                 tasks[task_id]["percent"] = round(cur_pct, 1)
 
             try:
-                download_single_flac_track(
+                flac_f, lrc_f = download_single_flac_track(
                     api=api,
                     track=track,
                     target_dir=album_dir,
@@ -896,22 +974,19 @@ def run_tidal_album_task(task_id: str, album_id: str, api: TidalApi, quality_mod
                     naming_format=naming_format,
                     album_title_fallback=album.title,
                 )
+                # Mover inmediatamente al ZIP sin recomprimir (ZIP_STORED) y borrar el archivo suelto para no duplicar disco
+                with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_STORED) as zf:
+                    if flac_f and flac_f.exists():
+                        zf.write(flac_f, flac_f.name)
+                        flac_f.unlink(missing_ok=True)
+                    if lrc_f and lrc_f.exists():
+                        zf.write(lrc_f, lrc_f.name)
+                        lrc_f.unlink(missing_ok=True)
             except Exception as e:
                 logger.error(f"[TIDAL ALBUM] Error en pista {track.title}: {e}")
 
-        # Empaquetar todo el álbum en un archivo .ZIP (incluye FLACs, letras .LRC y cover.jpg)
-        tasks[task_id]["status"] = "Empaquetando álbum y letras en archivo .ZIP..."
-        tasks[task_id]["percent"] = 95.0
-
-        zip_filename = f"{album_folder_name}.zip"
-        zip_path = task_dir / zip_filename
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for file_path in album_dir.rglob("*"):
-                if file_path.is_file():
-                    arcname = file_path.relative_to(album_dir)
-                    zip_file.write(file_path, arcname)
-
-        total_size = format_size(zip_path.stat().st_size)
+        shutil.rmtree(album_dir, ignore_errors=True)
+        total_size = format_size(zip_path.stat().st_size) if zip_path.exists() else "0 B"
 
         tasks[task_id]["completed"] = True
         tasks[task_id]["percent"] = 100.0
@@ -944,6 +1019,9 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
         tasks[task_id]["artist"] = "Varios Artistas"
         tasks[task_id]["total_tracks"] = total_tracks
 
+        zip_filename = f"{batch_folder_name}.zip"
+        zip_path = task_dir / zip_filename
+
         for idx, trk_id in enumerate(track_ids):
             try:
                 track = api.getTrack(trk_id)
@@ -951,27 +1029,16 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
                 t_artist = track.artist.name if track.artist else "Artista"
                 tasks[task_id]["status"] = f"Descargando ({idx+1}/{total_tracks}): {t_artist} - {t_title}"
 
-                base_pct = (idx / total_tracks) * 90.0
+                base_pct = (idx / total_tracks) * 95.0
 
                 def on_track_prog(frac: float, msg: str):
-                    cur_pct = base_pct + (frac * (90.0 / total_tracks))
+                    cur_pct = base_pct + (frac * (95.0 / total_tracks))
                     tasks[task_id]["percent"] = round(cur_pct, 1)
 
-                cover_data = b""
-                album_fallback = None
-                if track.album:
-                    album_fallback = getattr(track.album, "title", None)
-                    if getattr(track.album, "cover", None):
-                        try:
-                            c_uid = track.album.cover.replace("-", "/")
-                            c_url = f"https://resources.tidal.com/images/{c_uid}/1280x1280.jpg"
-                            res_cov = requests.get(c_url, timeout=10)
-                            if res_cov.status_code == 200:
-                                cover_data = res_cov.content
-                        except Exception:
-                            pass
+                cover_data = resolve_track_cover_bytes(api, track)
+                album_fallback = getattr(track.album, "title", None) if getattr(track, "album", None) else None
 
-                download_single_flac_track(
+                flac_f, lrc_f = download_single_flac_track(
                     api=api,
                     track=track,
                     target_dir=batch_dir,
@@ -981,26 +1048,23 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
                     naming_format=naming_format,
                     album_title_fallback=album_fallback,
                 )
+                # Mover inmediatamente al ZIP con ZIP_STORED y borrar el archivo suelto (ahorro de >50% de disco)
+                with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_STORED) as zf:
+                    if flac_f and flac_f.exists():
+                        zf.write(flac_f, flac_f.name)
+                        flac_f.unlink(missing_ok=True)
+                    if lrc_f and lrc_f.exists():
+                        zf.write(lrc_f, lrc_f.name)
+                        lrc_f.unlink(missing_ok=True)
             except Exception as e:
                 logger.error(f"[TIDAL BATCH] Error en pista ID {trk_id}: {e}")
 
-        # Empaquetar todo en un archivo .ZIP (incluye FLACs y letras sincronizadas .LRC)
-        tasks[task_id]["status"] = "Empaquetando colección y letras en archivo .ZIP..."
-        tasks[task_id]["percent"] = 95.0
-
-        zip_filename = f"{batch_folder_name}.zip"
-        zip_path = task_dir / zip_filename
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for file_path in batch_dir.rglob("*"):
-                if file_path.is_file():
-                    arcname = file_path.relative_to(batch_dir)
-                    zip_file.write(file_path, arcname)
-
-        total_size = format_size(zip_path.stat().st_size)
+        shutil.rmtree(batch_dir, ignore_errors=True)
+        total_size = format_size(zip_path.stat().st_size) if zip_path.exists() else "0 B"
 
         tasks[task_id]["completed"] = True
         tasks[task_id]["percent"] = 100.0
-        tasks[task_id]["status"] = "¡Colección completada con FLAC y letras en .ZIP!"
+        tasks[task_id]["status"] = "¡Colección completada con FLAC, carátulas y letras en .ZIP!"
         tasks[task_id]["result"] = {
             "type": "batch",
             "filename": zip_filename,
@@ -1065,67 +1129,197 @@ async def download_track_lyrics_direct(track_id: str, naming_format: Optional[st
 
 @app.get("/api/tidal/album/{album_id}/tracks")
 async def get_album_tracks(album_id: str):
-    """Devuelve la lista detallada de canciones de un álbum para visualización y descarga directa"""
+    """Devuelve la lista detallada de canciones de un álbum con sus carátulas para visualización y descarga directa"""
     api = get_active_tidal_api()
     try:
-        album = api.getAlbum(album_id)
-        cover_url = None
-        if album.cover:
-            c_uid = album.cover.replace("-", "/")
-            cover_url = f"https://resources.tidal.com/images/{c_uid}/640x640.jpg"
+        def fetch_album_data():
+            album = api.getAlbum(album_id)
+            cover_url = None
+            if album.cover:
+                c_uid = album.cover.replace("-", "/")
+                cover_url = f"https://resources.tidal.com/images/{c_uid}/640x640.jpg"
 
-        items_res = api.getAlbumItems(album_id, limit=100)
-        tracks = []
-        for it in (items_res.items or []):
-            if hasattr(it, "item") and it.item:
-                t = it.item
-                artists = ", ".join([a.name for a in t.artists]) if t.artists else (t.artist.name if t.artist else "Desconocido")
-                tracks.append({
-                    "id": str(t.id),
-                    "track_number": getattr(t, "trackNumber", None),
-                    "volume_number": getattr(t, "volumeNumber", 1),
-                    "title": t.title,
-                    "artist": artists,
-                    "duration": format_duration(t.duration),
-                    "duration_seconds": t.duration,
-                    "quality": getattr(t, "audioQuality", "LOSSLESS"),
-                    "url": f"https://tidal.com/browse/track/{t.id}",
-                })
+            items_res = api.getAlbumItems(album_id, limit=100)
+            tracks = []
+            for it in (items_res.items or []):
+                if hasattr(it, "item") and it.item:
+                    t = it.item
+                    artists = ", ".join([a.name for a in t.artists]) if t.artists else (t.artist.name if t.artist else "Desconocido")
+                    t_cover = cover_url
+                    if getattr(t, "album", None) and getattr(t.album, "cover", None):
+                        tc_uid = t.album.cover.replace("-", "/")
+                        t_cover = f"https://resources.tidal.com/images/{tc_uid}/640x640.jpg"
+                    tracks.append({
+                        "id": str(t.id),
+                        "track_number": getattr(t, "trackNumber", None),
+                        "volume_number": getattr(t, "volumeNumber", 1),
+                        "title": t.title,
+                        "artist": artists,
+                        "album": album.title,
+                        "album_id": str(album.id),
+                        "cover": t_cover,
+                        "cover_url": t_cover,
+                        "duration": format_duration(t.duration),
+                        "duration_seconds": t.duration,
+                        "quality": getattr(t, "audioQuality", "LOSSLESS"),
+                        "url": f"https://tidal.com/browse/track/{t.id}",
+                    })
 
-        return {
-            "id": str(album.id),
-            "title": album.title,
-            "artist": album.artist.name if album.artist else (album.artists[0].name if album.artists else "Varios Artistas"),
-            "cover": cover_url,
-            "release_date": str(album.releaseDate) if getattr(album, "releaseDate", None) else "",
-            "tracks_count": len(tracks),
-            "duration": format_duration(album.duration) if getattr(album, "duration", None) else "--:--",
-            "tracks": tracks,
-            "url": f"https://tidal.com/browse/album/{album.id}",
-        }
+            return {
+                "id": str(album.id),
+                "title": album.title,
+                "artist": album.artist.name if album.artist else (album.artists[0].name if album.artists else "Varios Artistas"),
+                "cover": cover_url,
+                "release_date": str(album.releaseDate) if getattr(album, "releaseDate", None) else "",
+                "tracks_count": len(tracks),
+                "duration": format_duration(album.duration) if getattr(album, "duration", None) else "--:--",
+                "tracks": tracks,
+                "url": f"https://tidal.com/browse/album/{album.id}",
+            }
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, fetch_album_data)
     except Exception as e:
         logger.error(f"[TIDAL] Error obteniendo canciones del álbum {album_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Error obteniendo canciones del álbum: {str(e)}")
 
 
-@app.get("/api/tidal/stream-preview")
-async def tidal_stream_preview(id: str):
-    """Retorna la URL directa de streaming para preescucha de canciones de Tidal"""
-    api = get_active_tidal_api()
-    try:
-        def get_stream():
-            s = api.getTrackStream(id, "LOW")
-            urls, _ = parseTrackStream(s)
-            return urls[0] if urls else None
+def find_external_preview_url(artist: str, title: str) -> Optional[str]:
+    """Busca un stream de preescucha rápido (MP3/M4A) en Deezer o iTunes cuando Tidal usa DASH o restringe el preview."""
+    clean_t = re.sub(r"\s*[\(\[].*?[\)\]]", "", title or "").strip() or (title or "").strip()
+    clean_a = (artist or "").split(",")[0].split("&")[0].strip()
+    query = f"{clean_a} {clean_t}".strip()
+    if not query:
+        return None
 
-        loop = asyncio.get_event_loop()
-        url = await loop.run_in_executor(None, get_stream)
-        if not url:
-            raise HTTPException(status_code=404, detail="No se pudo obtener el audio de preescucha.")
-        return {"url": url}
-    except Exception as e:
-        logger.error(f"[TIDAL STREAM] Error obteniendo preescucha de {id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error obteniendo preescucha: {str(e)}")
+    # 1. Intentar Deezer API (30s MP3 directo)
+    try:
+        dz_url = f"https://api.deezer.com/search?q={urllib.parse.quote(query)}&limit=5"
+        r = requests.get(dz_url, timeout=5)
+        if r.status_code == 200:
+            items = r.json().get("data", [])
+            for item in items:
+                prev = item.get("preview")
+                if prev:
+                    return prev
+    except Exception:
+        pass
+
+    # 2. Intentar iTunes Search API (30s M4A directo)
+    try:
+        it_url = f"https://itunes.apple.com/search?term={urllib.parse.quote(query)}&entity=song&limit=5"
+        r = requests.get(it_url, timeout=5)
+        if r.status_code == 200:
+            items = r.json().get("results", [])
+            for item in items:
+                prev = item.get("previewUrl")
+                if prev:
+                    return prev
+    except Exception:
+        pass
+
+    return None
+
+
+@app.get("/api/tidal/stream-preview")
+async def tidal_stream_preview(id: str, title: Optional[str] = None, artist: Optional[str] = None):
+    """Retorna la URL de streaming para preescucha con soporte DASH, auto-refresco de token y respaldo Deezer/iTunes."""
+    def resolve_preview():
+        t_title = (title or "").strip()
+        t_artist = (artist or "").strip()
+        api = None
+        try:
+            api = get_active_tidal_api()
+        except Exception:
+            api = None
+
+        if api:
+            if not t_title or not t_artist:
+                try:
+                    trk = api.getTrack(id)
+                    if trk:
+                        t_title = t_title or getattr(trk, "title", "")
+                        if getattr(trk, "artist", None):
+                            t_artist = t_artist or trk.artist.name
+                except Exception:
+                    pass
+
+            for attempt in range(2):
+                for q_mode in ("LOW", "HIGH", "LOSSLESS"):
+                    try:
+                        s = api.getTrackStream(id, q_mode)
+                        urls, _ = parseTrackStream(s)
+                        if urls:
+                            proxy_url = f"/api/tidal/stream-preview-audio?id={urllib.parse.quote(str(id))}&title={urllib.parse.quote(t_title)}&artist={urllib.parse.quote(t_artist)}"
+                            if len(urls) == 1:
+                                return {"url": urls[0], "fallback_url": proxy_url, "source": f"tidal_{q_mode.lower()}"}
+                            else:
+                                return {"url": proxy_url, "fallback_url": find_external_preview_url(t_artist, t_title), "source": "tidal_dash_proxy"}
+                    except Exception as err:
+                        err_str = str(err).lower()
+                        if ("401" in err_str or "403" in err_str or "token" in err_str or "privilege" in err_str) and attempt == 0:
+                            try:
+                                api = get_active_tidal_api(force_refresh=True)
+                            except Exception:
+                                pass
+                            break
+
+        ext_url = find_external_preview_url(t_artist, t_title)
+        if ext_url:
+            return {"url": ext_url, "fallback_url": ext_url, "source": "external_preview"}
+
+        return None
+
+    loop = asyncio.get_event_loop()
+    res_data = await loop.run_in_executor(None, resolve_preview)
+    if not res_data or not res_data.get("url"):
+        raise HTTPException(status_code=404, detail="No se pudo obtener el audio de preescucha para esta pista.")
+    return res_data
+
+
+@app.get("/api/tidal/stream-preview-audio")
+async def tidal_stream_preview_audio(id: str, title: Optional[str] = None, artist: Optional[str] = None):
+    """Ensambla y transmite en vivo fragmentos DASH de Tidal (o el respaldo externo) para que <audio> nunca falle."""
+    def build_preview_bytes() -> Tuple[bytes, str]:
+        t_title = (title or "").strip()
+        t_artist = (artist or "").strip()
+        try:
+            api = get_active_tidal_api()
+            for q_mode in ("LOW", "HIGH", "LOSSLESS"):
+                try:
+                    s = api.getTrackStream(id, q_mode)
+                    urls, file_ext = parseTrackStream(s)
+                    if not urls:
+                        continue
+                    max_segs = min(len(urls), 18)
+                    raw_buf = bytearray()
+                    with requests.Session() as sess:
+                        for u in urls[:max_segs]:
+                            with sess.get(u, timeout=12) as resp:
+                                resp.raise_for_status()
+                                raw_buf.extend(resp.content)
+                    if len(raw_buf) > 1024:
+                        mime = "audio/flac" if file_ext == ".flac" else "audio/mp4"
+                        return bytes(raw_buf), mime
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        ext_url = find_external_preview_url(t_artist, t_title)
+        if ext_url:
+            r = requests.get(ext_url, timeout=10)
+            if r.status_code == 200 and len(r.content) > 1024:
+                mime = "audio/mpeg" if ".mp3" in ext_url.lower() else "audio/mp4"
+                return r.content, mime
+
+        return b"", "audio/mp4"
+
+    loop = asyncio.get_event_loop()
+    audio_bytes, media_type = await loop.run_in_executor(None, build_preview_bytes)
+    if not audio_bytes:
+        raise HTTPException(status_code=404, detail="No se pudo ensamblar la preescucha.")
+    return Response(content=audio_bytes, media_type=media_type, headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=600"})
 
 
 @app.post("/api/tidal/download")
@@ -1172,7 +1366,7 @@ async def download_tidal(req: TidalDownloadRequest):
 
 @app.post("/api/tidal/download-batch")
 async def download_tidal_batch(req: TidalBatchDownloadRequest):
-    """Inicia la descarga por lotes de una lista de canciones en un paquete ZIP con letras .LRC"""
+    """Inicia la descarga por lotes de una lista de canciones en un paquete ZIP con letras .LRC y carátulas"""
     if not req.track_ids:
         raise HTTPException(status_code=400, detail="No se proporcionaron canciones para descargar.")
 
@@ -1211,9 +1405,9 @@ async def get_task_status(task_id: str):
 
 
 def cleanup_task_dir(task_id: str):
-    """Limpia el directorio temporal de la tarea después de que el usuario lo descarga"""
+    """Limpia el directorio temporal de la tarea después de que el usuario inicia la descarga"""
     def _delayed_delete():
-        time.sleep(300)  # Espera 5 minutos para permitir descargar tanto el FLAC como el LRC o Pack
+        time.sleep(60)  # 60s es suficiente para iniciar la transmisión del archivo y mantener el disco limpio
         task_dir = TEMP_DIR / task_id
         if task_dir.exists():
             shutil.rmtree(task_dir, ignore_errors=True)
@@ -1223,7 +1417,7 @@ def cleanup_task_dir(task_id: str):
 
 @app.get("/api/download/{task_id}/{filename}")
 async def download_file_by_task(task_id: str, filename: str, background_tasks: BackgroundTasks):
-    """Descarga directa aislada por tarea con limpieza automática de disco"""
+    """Descarga directa aislada por tarea con ensamblado ZIP bajo demanda y limpieza automática de disco"""
     task_dir = TEMP_DIR / task_id
     decoded_filename = urllib.parse.unquote(filename)
     file_path = task_dir / decoded_filename
@@ -1232,9 +1426,18 @@ async def download_file_by_task(task_id: str, filename: str, background_tasks: B
     if not file_path.resolve().is_relative_to(task_dir.resolve()):
         raise HTTPException(status_code=403, detail="Acceso denegado.")
 
+    # Si el usuario pidió el Pack (FLAC + Letra).zip de una pista individual, construirlo al vuelo con ZIP_STORED
+    if not file_path.exists() and decoded_filename.endswith("(FLAC + Letra).zip") and task_dir.exists():
+        try:
+            with zipfile.ZipFile(file_path, "w", zipfile.ZIP_STORED) as zf:
+                for item in task_dir.iterdir():
+                    if item.is_file() and item.suffix.lower() in (".flac", ".lrc"):
+                        zf.write(item, item.name)
+        except Exception as e:
+            logger.warning(f"Error creando Pack ZIP bajo demanda: {e}")
+
     if not file_path.exists() or not file_path.is_file():
-        # Puede ser un archivo dentro del zip o carpeta
-        candidates = list(task_dir.rglob(decoded_filename))
+        candidates = list(task_dir.rglob(decoded_filename)) if task_dir.exists() else []
         if candidates:
             file_path = candidates[0]
         else:
@@ -1248,7 +1451,7 @@ async def download_file_by_task(task_id: str, filename: str, background_tasks: B
     else:
         media_type = "application/zip"
 
-    # Programar la limpieza automática del disco a los 5 minutos
+    # Programar la limpieza automática del disco a los 60 segundos
     background_tasks.add_task(cleanup_task_dir, task_id)
 
     return FileResponse(
@@ -1272,6 +1475,6 @@ async def serve_index():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 7860))
     logger.info(f"Iniciando Tidal Cloud Studio en el puerto {port}...")
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

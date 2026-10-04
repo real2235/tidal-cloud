@@ -589,8 +589,14 @@
 
     function addToQueue(track) {
       if (!track || !track.id) return;
+      const normalizedCover = track.cover || track.cover_url || '';
+      const normalizedTrack = {
+        ...track,
+        cover: normalizedCover,
+        cover_url: normalizedCover
+      };
       const isNew = !downloadQueue.has(String(track.id));
-      downloadQueue.set(String(track.id), track);
+      downloadQueue.set(String(track.id), normalizedTrack);
       saveQueueToStorage();
       updateQueueUI();
       syncTrackListButtons();
@@ -1395,20 +1401,20 @@
 
                   if (res.has_lyrics && res.pack_download_url) {
                     badgeLyricsIncluded.classList.remove('hidden');
-                    badgeLyricsIncluded.textContent = "🎤 Letra .LRC sincronizada incluida";
+                    badgeLyricsIncluded.textContent = "🎤 Portada + Letra .LRC incrustadas en el FLAC";
 
-                    // Disparar descarga automática del Pack ZIP (FLAC + Letra .LRC juntos en 1 solo archivo seguro)
-                    triggerBrowserDownload(res.pack_download_url, res.pack_filename);
+                    // Descarga directa del FLAC (ya incluye portada y letra incrustadas, ahorrando 50% de ancho de banda)
+                    triggerBrowserDownload(res.download_url, res.filename);
 
-                    // Botón principal: Descargar Pack ZIP
-                    btnDirectDownload.href = res.pack_download_url;
-                    btnDirectDownload.setAttribute('download', res.pack_filename);
-                    btnDirectDownloadText.textContent = "📦 Descargar Pack (FLAC + Letra .LRC)";
+                    // Botón principal: Descargar Audio FLAC
+                    btnDirectDownload.href = res.download_url;
+                    btnDirectDownload.setAttribute('download', res.filename);
+                    btnDirectDownloadText.textContent = "🎵 Descargar Audio FLAC";
 
-                    // Botón secundario 1: Solo Audio FLAC
-                    btnDownloadPack.href = res.download_url;
-                    btnDownloadPack.setAttribute('download', res.filename);
-                    btnDownloadPack.innerHTML = `<span>🎵 Solo Audio FLAC</span>`;
+                    // Botón secundario 1: Pack ZIP (FLAC + .LRC suelto) bajo demanda
+                    btnDownloadPack.href = res.pack_download_url;
+                    btnDownloadPack.setAttribute('download', res.pack_filename);
+                    btnDownloadPack.innerHTML = `<span>📦 Pack ZIP (FLAC + .LRC)</span>`;
                     btnDownloadPack.classList.remove('hidden');
 
                     // Botón secundario 2: Solo Letra LRC
@@ -1612,13 +1618,38 @@
       }
 
       try {
-        const res = await fetch(`/api/tidal/stream-preview?id=${trackId}`);
+        const res = await fetch(`/api/tidal/stream-preview?id=${encodeURIComponent(trackId)}&title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`);
         const data = await res.json();
         if (!res.ok || !data.url) throw new Error(data.detail || "Error obteniendo audio");
 
+        let fallbackTried = false;
+        audio.onerror = async () => {
+          if (!fallbackTried && data.fallback_url && audio.src !== data.fallback_url) {
+            fallbackTried = true;
+            try {
+              audio.src = data.fallback_url;
+              await audio.play();
+              updatePreviewButtonsState(true);
+              return;
+            } catch (e) {}
+          }
+          updatePreviewButtonsState(false);
+        };
+
         audio.src = data.url;
-        await audio.play();
-        updatePreviewButtonsState(true);
+        try {
+          await audio.play();
+          updatePreviewButtonsState(true);
+        } catch (playErr) {
+          if (data.fallback_url && audio.src !== data.fallback_url) {
+            fallbackTried = true;
+            audio.src = data.fallback_url;
+            await audio.play();
+            updatePreviewButtonsState(true);
+          } else {
+            throw playErr;
+          }
+        }
       } catch (err) {
         alert("No se pudo reproducir la preescucha: " + err.message);
         updatePreviewButtonsState(false);
