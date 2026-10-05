@@ -858,14 +858,25 @@
       };
     }
 
-    // Disparar descarga automática en el navegador del usuario
+    // Detectar Safari / iOS (iPhone / iPad) para adaptar las descargas al gestor nativo de "Archivos"
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    // Disparar descarga automática en el navegador del usuario (compatible con Safari iOS y Escritorio)
     function triggerBrowserDownload(url, filename) {
       if (!url) return;
       try {
+        if (isIOS || isSafari) {
+          // En Safari iOS NUNCA usar target="_blank" en un callback asíncrono (el bloqueador de popups lo cancela).
+          // Como el servidor responde con Content-Disposition: attachment y application/octet-stream,
+          // window.location.assign abre el diálogo nativo "¿Quieres descargar...?" sin salir de la página.
+          window.location.assign(url);
+          return;
+        }
         const a = document.createElement('a');
         a.href = url;
         if (filename) a.download = filename;
-        a.target = '_blank';
+        a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
         setTimeout(() => {
@@ -895,7 +906,7 @@
       }
     }
     checkAccountStatus();
-        // Persistencia del formato de nombre preferido
+    // Persistencia del formato de nombre preferido
     const savedNamingFormat = localStorage.getItem('tidal_naming_format') || 'full';
     document.querySelectorAll('input[name="namingFormat"]').forEach(r => {
       if (r.value === savedNamingFormat) r.checked = true;
@@ -906,7 +917,12 @@
 
     window.downloadDirectLyrics = function(trackId) {
       const naming_format = document.querySelector('input[name="namingFormat"]:checked')?.value || 'full';
-      window.open(`/api/tidal/lyrics/download/${trackId}?naming_format=${naming_format}`, '_blank');
+      const lrcUrl = `/api/tidal/lyrics/download/${trackId}?naming_format=${naming_format}`;
+      if (isIOS || isSafari) {
+        window.location.assign(lrcUrl);
+      } else {
+        triggerBrowserDownload(lrcUrl, '');
+      }
     };
 
     // Inicializar cola persistente desde LocalStorage
@@ -1312,6 +1328,7 @@
       progressTitle.textContent = `Descargando Colección (${trackIds.length} canciones)...`;
       progressStatus.textContent = 'Iniciando empaquetado en el servidor...';
       successBox.classList.add('hidden');
+      try { progressBox.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
 
       const naming_format = document.querySelector('input[name="namingFormat"]:checked')?.value || 'full';
       try {
@@ -1339,6 +1356,7 @@
       progressPercent.textContent = '0%';
       progressStatus.textContent = 'Iniciando en el servidor...';
       successBox.classList.add('hidden');
+      try { progressBox.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
 
       const naming_format = document.querySelector('input[name="namingFormat"]:checked')?.value || 'full';
       try {
@@ -1360,11 +1378,17 @@
 
     function pollTask(taskId) {
       return new Promise((resolve, reject) => {
-        const timer = setInterval(async () => {
+        let consecutiveErrors = 0;
+        const MAX_CONSECUTIVE_ERRORS = 12;
+
+        const pollStep = async () => {
           try {
-            const res = await fetch(`/api/task-status/${taskId}`);
-            if (!res.ok) throw new Error("Error consultando estado");
+            const res = await fetch(`/api/task-status/${taskId}`, { cache: 'no-store' });
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}`);
+            }
             const task = await res.json();
+            consecutiveErrors = 0;
 
             const pct = Math.min(Math.max(Math.round(task.percent), 0), 100);
             progressBar.style.width = `${pct}%`;
@@ -1372,22 +1396,25 @@
             progressStatus.textContent = task.status || 'Descargando...';
 
             if (task.completed) {
-              clearInterval(timer);
               progressBox.classList.add('hidden');
 
               if (task.error) {
                 alert("Error al descargar: " + task.error);
                 reject(new Error(task.error));
+                return;
               } else if (task.result) {
                 const res = task.result;
-                
+                const iosHint = isIOS
+                  ? "En iPhone/iPad: Toca «Descargar» en el aviso de Safari (o pulsa el botón dorado abajo) para guardarlo en la app Archivos."
+                  : "Descargando a tu equipo...";
+
                 if (res.type === 'album' || res.type === 'batch') {
                   successTitle.textContent = res.type === 'batch' ? "¡Colección Personalizada en .ZIP!" : "¡Álbum Completado en .ZIP!";
                   successFileName.textContent = res.filename;
-                  successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • Descargando a tu equipo...`;
+                  successFileSize.textContent = `Tamaño: ${res.filesize || res.total_size || ''} • ${iosHint}`;
                   btnDirectDownload.href = res.download_url;
                   btnDirectDownload.setAttribute('download', res.filename);
-                  btnDirectDownloadText.textContent = res.type === 'batch' ? "Descargar Colección ZIP" : "Descargar Álbum ZIP";
+                  btnDirectDownloadText.textContent = res.type === 'batch' ? "⬇ Guardar Colección ZIP" : "⬇ Guardar Álbum ZIP";
                   badgeLyricsIncluded.classList.remove('hidden');
                   badgeLyricsIncluded.textContent = "📦 Todas las canciones y letras sincronizadas (.LRC) incluidas en el ZIP";
                   btnDownloadLrc.classList.add('hidden');
@@ -1397,7 +1424,7 @@
                   // Canción individual
                   successTitle.textContent = "¡Canción FLAC Lista!";
                   successFileName.textContent = res.filename;
-                  successFileSize.textContent = `Tamaño: ${res.filesize || ''} • Descargando a tu equipo...`;
+                  successFileSize.textContent = `Tamaño: ${res.filesize || ''} • ${iosHint}`;
 
                   if (res.has_lyrics && res.pack_download_url) {
                     badgeLyricsIncluded.classList.remove('hidden');
@@ -1409,7 +1436,7 @@
                     // Botón principal: Descargar Audio FLAC
                     btnDirectDownload.href = res.download_url;
                     btnDirectDownload.setAttribute('download', res.filename);
-                    btnDirectDownloadText.textContent = "🎵 Descargar Audio FLAC";
+                    btnDirectDownloadText.textContent = "🎵 Guardar Audio FLAC";
 
                     // Botón secundario 1: Pack ZIP (FLAC + .LRC suelto) bajo demanda
                     btnDownloadPack.href = res.pack_download_url;
@@ -1428,21 +1455,32 @@
                     btnDownloadPack.classList.add('hidden');
                     btnDirectDownload.href = res.download_url;
                     btnDirectDownload.setAttribute('download', res.filename);
-                    btnDirectDownloadText.textContent = "Descargar Audio FLAC";
+                    btnDirectDownloadText.textContent = "🎵 Guardar Audio FLAC";
                     triggerBrowserDownload(res.download_url, res.filename);
                   }
                 }
 
                 successBox.classList.remove('hidden');
+                try { successBox.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
                 resolve();
+                return;
               }
             }
+
+            setTimeout(pollStep, 750);
           } catch (e) {
-            clearInterval(timer);
+            consecutiveErrors++;
+            // En Safari iOS ("Load failed") o cambios breves de red móvil, reintentar automáticamente sin abortar
+            if (consecutiveErrors <= MAX_CONSECUTIVE_ERRORS) {
+              setTimeout(pollStep, 1200);
+              return;
+            }
             progressBox.classList.add('hidden');
             reject(e);
           }
-        }, 600);
+        };
+
+        setTimeout(pollStep, 500);
       });
     }
 
@@ -1545,6 +1583,8 @@
       if (!a) {
         a = new Audio();
         a.id = 'tidalPreviewAudio';
+        a.setAttribute('playsinline', '');
+        a.setAttribute('webkit-playsinline', '');
         document.body.appendChild(a);
       }
       return a;
@@ -1603,6 +1643,12 @@
         updatePreviewButtonsState(true);
         return;
       }
+
+      // Desbloquear <audio> sincrónicamente dentro del gesto táctil para Safari iOS antes del await fetch()
+      try {
+        audio.pause();
+        audio.load();
+      } catch (e) {}
 
       currentPreviewTrackId = trackId;
       if (pTitle) pTitle.textContent = title;

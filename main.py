@@ -763,8 +763,13 @@ def download_single_flac_track(
     if on_subprogress:
         on_subprogress(0.85, "Remuxando con FFmpeg a FLAC...")
 
-    cmd = ["ffmpeg", "-y", "-i", str(raw_file), str(final_flac_file)]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Intentar primero remux rápido sin recodificar (-c:a copy) y respaldar con codificación FLAC rápida
+    cmd_copy = ["ffmpeg", "-y", "-i", str(raw_file), "-vn", "-c:a", "copy", str(final_flac_file)]
+    res = subprocess.run(cmd_copy, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode != 0 or not final_flac_file.exists() or final_flac_file.stat().st_size < 1024:
+        cmd_enc = ["ffmpeg", "-y", "-i", str(raw_file), "-vn", "-c:a", "flac", "-compression_level", "5", str(final_flac_file)]
+        res = subprocess.run(cmd_enc, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
     if res.returncode == 0 and final_flac_file.exists():
         raw_file.unlink(missing_ok=True)
     else:
@@ -1079,9 +1084,9 @@ def run_tidal_batch_task(task_id: str, track_ids: List[str], api: TidalApi, qual
         tasks[task_id]["completed"] = True
 
 
-@app.get("/api/tidal/lyrics/download/{track_id}")
+@app.api_route("/api/tidal/lyrics/download/{track_id}", methods=["GET", "HEAD"])
 async def download_track_lyrics_direct(track_id: str, naming_format: Optional[str] = "full"):
-    """Descarga directa del archivo de letra sincronizada (.lrc) para cualquier canción"""
+    """Descarga directa del archivo de letra sincronizada (.lrc) para cualquier canción (compatible con Safari iOS)"""
     api = get_active_tidal_api()
     try:
         track = api.getTrack(track_id)
@@ -1114,12 +1119,17 @@ async def download_track_lyrics_direct(track_id: str, naming_format: Optional[st
         else:
             filename = f"{artist_name} - {album_name} - {track_num} - {track_title}.lrc"
 
-        content = lyr_info["text"]
+        content_bytes = lyr_info["text"].encode("utf-8")
 
         return Response(
-            content=content.encode("utf-8"),
-            media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": make_content_disposition(filename)}
+            content=content_bytes,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": make_content_disposition(filename),
+                "Content-Length": str(len(content_bytes)),
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-cache, no-store, must-revalidate",
+            }
         )
     except HTTPException:
         raise
@@ -1405,19 +1415,26 @@ async def get_task_status(task_id: str):
 
 
 def cleanup_task_dir(task_id: str):
-    """Limpia el directorio temporal de la tarea después de que el usuario inicia la descarga"""
-    def _delayed_delete():
-        time.sleep(60)  # 60s es suficiente para iniciar la transmisión del archivo y mantener el disco limpio
+    """Limpia el directorio temporal tras 180s de inactividad (permite las múltiples peticiones HEAD/GET de Safari iOS)"""
+    now = time.time()
+    if task_id in tasks:
+        tasks[task_id]["last_access"] = now
+
+    def _delayed_delete(scheduled_at: float):
+        time.sleep(180)
+        # Si hubo otra petición posterior (ej. nsurlsessiond de iOS o descarga de LRC/ZIP adicional), esperar a su propio timer
+        if task_id in tasks and tasks[task_id].get("last_access", 0) > scheduled_at + 1.0:
+            return
         task_dir = TEMP_DIR / task_id
         if task_dir.exists():
             shutil.rmtree(task_dir, ignore_errors=True)
             logger.info(f"[CLEANUP] Tarea {task_id} y archivos temporales eliminados del servidor.")
-    threading.Thread(target=_delayed_delete, daemon=True).start()
+    threading.Thread(target=_delayed_delete, args=(now,), daemon=True).start()
 
 
-@app.get("/api/download/{task_id}/{filename}")
+@app.api_route("/api/download/{task_id}/{filename}", methods=["GET", "HEAD"])
 async def download_file_by_task(task_id: str, filename: str, background_tasks: BackgroundTasks):
-    """Descarga directa aislada por tarea con ensamblado ZIP bajo demanda y limpieza automática de disco"""
+    """Descarga directa aislada por tarea con soporte nativo para Safari iOS (GET/HEAD + application/octet-stream)"""
     task_dir = TEMP_DIR / task_id
     decoded_filename = urllib.parse.unquote(filename)
     file_path = task_dir / decoded_filename
@@ -1443,22 +1460,34 @@ async def download_file_by_task(task_id: str, filename: str, background_tasks: B
         else:
             raise HTTPException(status_code=404, detail="Archivo temporal no encontrado.")
 
-    ext = file_path.suffix.lower()
-    if ext == ".flac":
-        media_type = "audio/flac"
-    elif ext in [".lrc", ".txt"]:
-        media_type = "text/plain; charset=utf-8"
-    else:
-        media_type = "application/zip"
+    # Actualizar mtime del directorio para evitar que clean_old_temp_dirs lo borre mientras se descarga
+    try:
+        os.utime(task_dir, None)
+    except Exception:
+        pass
 
-    # Programar la limpieza automática del disco a los 60 segundos
+    # IMPORTANTE PARA SAFARI iOS (iPhone / iPad):
+    # Si se envía "audio/flac", Safari iOS intercepta el enlace con el reproductor QuickTime en lugar de descargarlo
+    # y falla con archivos FLAC de 24-bit. Con "application/octet-stream" + "X-Content-Type-Options: nosniff" + "attachment",
+    # Safari iOS abre siempre el gestor nativo "¿Quieres descargar...?" y lo guarda directo en la app "Archivos" (Files).
+    ext = file_path.suffix.lower()
+    if ext == ".zip":
+        media_type = "application/zip"
+    else:
+        media_type = "application/octet-stream"
+
+    # Programar limpieza diferida con ventana de 180s desde el último acceso
     background_tasks.add_task(cleanup_task_dir, task_id)
 
     return FileResponse(
         path=str(file_path),
         filename=file_path.name,
         media_type=media_type,
-        headers={"Content-Disposition": make_content_disposition(file_path.name)},
+        headers={
+            "Content-Disposition": make_content_disposition(file_path.name),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-cache, no-store, must-revalidate",
+        },
     )
 
 
